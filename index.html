@@ -2,505 +2,977 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>수경..기다림</title>
-<style>html,body{margin:0;padding:0;min-height:100%;background:#fdf3f0;}</style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>SPEXTRUM Control Tower</title>
+<style>
+:root{
+  --bg:#F5F6F5; --surface:#FFFFFF; --ink:#17211E; --sub:#5C6864; --line:#E3E7E5;
+  --brand:#0E5748; --brand-soft:#E4EFEB; --brand-ink:#0A3D33;
+  --ok:#1B7A4E; --ok-bg:#E4F2EA; --danger:#C4442A; --danger-bg:#FAE8E3;
+  --amber:#A9750F; --amber-bg:#F8EFD9; --gray:#6B7570; --gray-bg:#EEF0EF;
+  --blue:#2B5FA3; --blue-bg:#E6EDF7;
+  --r:10px; --shadow:0 1px 2px rgba(23,33,30,.05),0 4px 14px rgba(23,33,30,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:'Pretendard Variable',Pretendard,-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR','Segoe UI',sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;padding-bottom:env(safe-area-inset-bottom)}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+
+/* ── layout ── */
+#app{display:flex;min-height:100vh}
+aside#side{width:196px;flex:0 0 196px;background:var(--surface);border-right:1px solid var(--line);
+  padding:20px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px}
+#side .logo{font-weight:800;font-size:15px;letter-spacing:.04em;padding:4px 10px 2px;color:var(--brand-ink)}
+#side .logo small{display:block;font-weight:600;font-size:10.5px;letter-spacing:.14em;color:var(--sub);margin-top:1px}
+#side nav{margin-top:14px;display:flex;flex-direction:column;gap:2px}
+#side nav button{display:flex;align-items:center;gap:9px;text-align:left;padding:8px 10px;border-radius:8px;color:var(--sub);font-weight:600;font-size:13.5px}
+#side nav button.on{background:var(--brand-soft);color:var(--brand-ink)}
+#side nav button:hover{background:var(--gray-bg)}
+#side nav button.on:hover{background:var(--brand-soft)}
+#side .foot{margin-top:auto;padding:8px 10px;font-size:11px;color:var(--sub)}
+main{flex:1;min-width:0;padding:20px 22px 90px;max-width:1180px}
+h1.page{font-size:19px;font-weight:800;margin-bottom:2px}
+p.pagesub{color:var(--sub);font-size:12.5px;margin-bottom:16px}
+
+/* ── status strip (signature) ── */
+#strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 14px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#strip::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:6px 13px;display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--sub);box-shadow:var(--shadow)}
+.chip b{font-size:14px;color:var(--ink)}
+.chip.alert{border-color:var(--danger);background:var(--danger-bg);color:var(--danger)}
+.chip.alert b{color:var(--danger)}
+.chip.warn{border-color:#E4CE9C;background:var(--amber-bg);color:var(--amber)}
+.chip.warn b{color:var(--amber)}
+
+/* ── cards / tables ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);margin-bottom:16px;overflow:hidden}
+.card>.hd{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
+.card>.hd h2{font-size:14px;font-weight:800}
+.card>.hd .sp{flex:1}
+.card>.bd{padding:14px 16px}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{font-size:11.5px;color:var(--sub);font-weight:700;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:#FAFBFA}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr.click{cursor:pointer}
+tr.click:hover td{background:#F6F9F8}
+td.r,th.r{text-align:right}
+tfoot td{font-weight:800;background:#FAFBFA}
+
+/* ── badges ── */
+.b{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.b.g{background:var(--ok-bg);color:var(--ok)} .b.rd{background:var(--danger-bg);color:var(--danger)}
+.b.a{background:var(--amber-bg);color:var(--amber)} .b.gy{background:var(--gray-bg);color:var(--gray)}
+.b.bl{background:var(--blue-bg);color:var(--blue)}
+.dd{font-weight:800}
+.dd.over{color:var(--danger)} .dd.soon{color:var(--amber)}
+.pri{display:inline-flex;width:20px;height:20px;border-radius:6px;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+.pri.A{background:var(--danger-bg);color:var(--danger)}.pri.B{background:var(--blue-bg);color:var(--blue)}
+.pri.C{background:var(--gray-bg);color:var(--gray)}.pri.D{background:var(--gray-bg);color:var(--gray)}
+
+/* ── controls ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;font-weight:700;font-size:13px;background:var(--brand);color:#fff}
+.btn:hover{background:var(--brand-ink)}
+.btn.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+.btn.ghost:hover{background:var(--gray-bg)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.btn.dangerous{background:var(--danger-bg);color:var(--danger)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.filters select,.filters input[type=search]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:13px;max-width:170px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{padding:6px 12px;font-size:12.5px;font-weight:700;color:var(--sub)}
+.seg button.on{background:var(--brand-soft);color:var(--brand-ink)}
+
+/* ── modal ── */
+#ovl{position:fixed;inset:0;background:rgba(20,28,25,.45);display:none;z-index:60;align-items:flex-end;justify-content:center}
+#ovl.show{display:flex}
+#modal{background:var(--surface);width:100%;max-width:640px;max-height:88vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:18px 18px 26px}
+@media(min-width:760px){#ovl{align-items:center}#modal{border-radius:14px;padding:22px;max-height:84vh}}
+#modal h3{font-size:16px;font-weight:800;margin-bottom:14px;display:flex;align-items:center}
+#modal h3 .x{margin-left:auto;color:var(--sub);font-size:20px;padding:2px 8px}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.f{display:flex;flex-direction:column;gap:4px}
+.f.full{grid-column:1/-1}
+.f label{font-size:11.5px;font-weight:700;color:var(--sub)}
+.f input,.f select,.f textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#FAFBFA;font-size:13.5px;width:100%}
+.f textarea{min-height:64px;resize:vertical}
+.f input:focus,.f select:focus,.f textarea:focus{outline:2px solid var(--brand);outline-offset:-1px;background:#fff}
+.macts{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.subsec{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.subsec h4{font-size:12.5px;font-weight:800;color:var(--sub);margin-bottom:8px}
+.mini{font-size:12.5px}
+.mini li{list-style:none;padding:6px 0;border-bottom:1px dashed var(--line)}
+.mini li:last-child{border-bottom:none}
+
+/* ── mobile nav ── */
+#tabs{display:none;position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
+  z-index:50;padding-bottom:env(safe-area-inset-bottom)}
+#tabs .row{display:flex}
+#tabs button{flex:1;padding:9px 0 7px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--sub)}
+#tabs button.on{color:var(--brand-ink)}
+#tabs button .ic{font-size:17px;line-height:1}
+#sheet{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-radius:16px 16px 0 0;z-index:70;
+  transform:translateY(105%);transition:transform .22s ease;padding:14px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -8px 30px rgba(0,0,0,.18)}
+#sheet.show{transform:none}
+#sheetbg{position:fixed;inset:0;background:rgba(20,28,25,.35);z-index:65;display:none}
+#sheetbg.show{display:block}
+#sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+#sheet button.item{display:flex;width:100%;align-items:center;gap:10px;padding:12px 8px;border-radius:10px;font-weight:700;font-size:14px}
+#sheet button.item:hover{background:var(--gray-bg)}
+#sheet button.item small{margin-left:auto;color:var(--sub);font-weight:500;font-size:12px}
+
+.empty{color:var(--sub);font-size:13px;padding:18px 6px;text-align:center}
+.hint{font-size:11.5px;color:var(--sub)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--ink);color:#fff;padding:9px 16px;border-radius:999px;font-size:13px;font-weight:600;z-index:90;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
+ul.notes{font-size:12.5px;color:var(--sub);padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.mtx{font-size:12px}
+.mtx th{position:sticky;top:0}
+.mtx th.name,.mtx td.name{position:sticky;left:0;background:var(--surface);z-index:2;font-weight:700;min-width:74px}
+.mtx th.name{background:#FAFBFA;z-index:3}
+.mtx input{width:46px;padding:3px 4px;border:1px solid transparent;border-radius:5px;text-align:right;background:transparent}
+.mtx input:hover{border-color:var(--line);background:#FAFBFA}
+.mtx input:focus{outline:2px solid var(--brand);outline-offset:-1px;background:#fff}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.kpi .k{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--shadow)}
+.kpi .k .l{font-size:11.5px;color:var(--sub);font-weight:700}
+.kpi .k .v{font-size:19px;font-weight:800;margin-top:2px}
+.kpi .k.rd .v{color:var(--danger)} .kpi .k.am .v{color:var(--amber)} .kpi .k.gr .v{color:var(--ok)}
+
+@media(max-width:900px){
+  aside#side{display:none}
+  #tabs{display:block}
+  main{padding:16px 14px 96px}
+  .fgrid{grid-template-columns:1fr}
+  .filters select,.filters input[type=search]{max-width:none;flex:1}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
 </head>
 <body>
 <div id="app">
-  <style>
-    #app {
-      --sky-top: #fdf3f0;
-      --sky-mid: #fbeaf1;
-      --sky-bot: #efe9fb;
-      --cloud: #ffffff;
-      --peach: #ffb7a3;
-      --peach-deep: #f79c85;
-      --pink: #f6c6d8;
-      --lav: #b9a8e3;
-      --ink: #6b5d7a;
-      --ink-soft: #a294b5;
-      --shadow: 0 10px 30px -12px rgba(185, 168, 227, 0.45);
-      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
-        "Pretendard", "Malgun Gothic", "Segoe UI", sans-serif;
-      color: var(--ink);
-      min-height: 100%;
-      background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 45%, var(--sky-bot) 100%);
-      overflow-x: hidden;
-      -webkit-font-smoothing: antialiased;
-    }
-    #app * { box-sizing: border-box; margin: 0; padding: 0; }
-    #app .wrap {
-      position: relative;
-      max-width: 460px;
-      margin: 0 auto;
-      padding: 38px 22px 60px;
-    }
-
-    /* drifting background clouds */
-    #app .bgcloud {
-      position: absolute;
-      border-radius: 99px;
-      background: rgba(255,255,255,0.55);
-      filter: blur(2px);
-      pointer-events: none;
-    }
-    #app .bgcloud::before, #app .bgcloud::after {
-      content: ""; position: absolute; border-radius: 50%;
-      background: inherit;
-    }
-    #app .bgcloud::before { width: 55%; height: 160%; left: 12%; top: -75%; }
-    #app .bgcloud::after  { width: 42%; height: 120%; right: 14%; top: -48%; }
-    #app .c1 { width: 150px; height: 44px; top: 90px; left: -50px; animation: drift 46s linear infinite; }
-    #app .c2 { width: 110px; height: 34px; top: 300px; right: -40px; animation: drift 58s linear infinite reverse; opacity: 0.7; }
-    #app .c3 { width: 90px; height: 28px; top: 520px; left: -30px; animation: drift 64s linear infinite; opacity: 0.6; }
-    @keyframes drift {
-      from { transform: translateX(-120px); }
-      to   { transform: translateX(560px); }
-    }
-
-    /* wordmark */
-    #app .mark { position: relative; text-align: center; margin-bottom: 26px; }
-    #app .mark .title {
-      display: inline-block;
-      font-size: 21px;
-      font-weight: 600;
-      letter-spacing: 0.22em;
-      color: var(--ink);
-      background: var(--cloud);
-      padding: 12px 26px;
-      border-radius: 99px;
-      box-shadow: var(--shadow);
-    }
-    #app .mark .title .nm { cursor: text; }
-    #app .mark .title .dots { color: var(--peach-deep); letter-spacing: 0.08em; }
-    #app .mark .sub {
-      margin-top: 12px;
-      font-size: 12px;
-      letter-spacing: 0.1em;
-      color: var(--ink-soft);
-    }
-    #app .mark input {
-      background: transparent; border: none; outline: none;
-      font: inherit; color: var(--peach-deep); text-align: center;
-      letter-spacing: 0.15em; width: 5.5em;
-      border-bottom: 2px dotted var(--pink);
-    }
-
-    /* hero cloud */
-    #app .hero {
-      position: relative;
-      text-align: center;
-      margin-bottom: 30px;
-    }
-    #app .cloudcard {
-      position: relative;
-      background: var(--cloud);
-      border-radius: 44px;
-      padding: 44px 24px 36px;
-      box-shadow: var(--shadow);
-    }
-    /* cloud bumps on top */
-    #app .cloudcard::before, #app .cloudcard::after {
-      content: "";
-      position: absolute;
-      background: var(--cloud);
-      border-radius: 50%;
-      top: -22px;
-    }
-    #app .cloudcard::before { width: 74px; height: 74px; left: 26%; }
-    #app .cloudcard::after  { width: 52px; height: 52px; left: 46%; top: -30px; }
-    #app .bump3 {
-      position: absolute; width: 60px; height: 60px; border-radius: 50%;
-      background: var(--cloud); top: -18px; left: 58%;
-    }
-    #app.waiting .cloudcard { animation: floaty 5s ease-in-out infinite; }
-    @keyframes floaty {
-      0%, 100% { transform: translateY(0); }
-      50%      { transform: translateY(-7px); }
-    }
-
-    #app .clock {
-      position: relative;
-      font-size: 54px;
-      font-weight: 300;
-      letter-spacing: 0.03em;
-      font-variant-numeric: tabular-nums;
-      line-height: 1;
-      color: var(--ink);
-    }
-    #app .clock .u { font-size: 20px; color: var(--pink); margin: 0 3px; font-weight: 500; }
-    #app.waiting .clock { color: var(--peach-deep); }
-    #app .status {
-      position: relative;
-      margin-top: 15px;
-      font-size: 13px;
-      letter-spacing: 0.05em;
-      color: var(--ink-soft);
-      min-height: 18px;
-    }
-    #app.waiting .status { color: var(--lav); }
-
-    /* main button */
-    #app .btn {
-      position: relative;
-      display: block;
-      width: 78%;
-      margin: 26px auto 0;
-      padding: 16px;
-      border: none;
-      border-radius: 99px;
-      background: linear-gradient(180deg, #cfc2ef, var(--lav));
-      color: #fff;
-      font: inherit;
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.16em;
-      cursor: pointer;
-      box-shadow: 0 8px 22px -8px rgba(185,168,227,0.7);
-      transition: transform 0.15s ease, box-shadow 0.2s ease;
-    }
-    #app .btn:hover { transform: translateY(-2px); }
-    #app .btn:active { transform: scale(0.97); }
-    #app.waiting .btn {
-      background: linear-gradient(180deg, var(--peach), var(--peach-deep));
-      box-shadow: 0 8px 24px -8px rgba(247,156,133,0.75);
-    }
-    #app .btn:focus-visible { outline: 3px solid var(--pink); outline-offset: 3px; }
-
-    /* total cloud */
-    #app .total {
-      position: relative;
-      background: rgba(255,255,255,0.72);
-      border-radius: 32px;
-      padding: 26px 22px 24px;
-      box-shadow: var(--shadow);
-    }
-    #app .total .label {
-      font-size: 11.5px; letter-spacing: 0.14em; color: var(--ink-soft);
-      text-align: center;
-    }
-    #app .total .big {
-      text-align: center;
-      margin-top: 11px;
-      font-size: 29px;
-      font-weight: 500;
-      font-variant-numeric: tabular-nums;
-      color: var(--ink);
-    }
-    #app .total .big em {
-      font-style: normal; color: var(--lav); font-size: 14px;
-      font-weight: 500; margin: 0 7px 0 2px;
-    }
-    #app .track {
-      margin-top: 18px;
-      height: 14px; border-radius: 99px;
-      background: #f3ecf7;
-      overflow: hidden;
-      box-shadow: inset 0 2px 4px rgba(185,168,227,0.18);
-    }
-    #app .track > i {
-      display: block; height: 100%; width: 0%;
-      background: linear-gradient(90deg, var(--pink), var(--peach));
-      border-radius: 99px;
-      transition: width 0.7s cubic-bezier(.2,.7,.3,1);
-    }
-    #app .track-label {
-      margin-top: 10px; text-align: center;
-      font-size: 11.5px; letter-spacing: 0.04em; color: var(--ink-soft);
-    }
-    #app .chips {
-      display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
-      margin-top: 16px;
-    }
-    #app .chip {
-      font-size: 11.5px; letter-spacing: 0.03em; color: var(--ink);
-      padding: 6px 13px;
-      border-radius: 99px; background: #fdf0ea;
-    }
-    #app .chip b { color: var(--peach-deep); font-weight: 700; }
-
-    /* log */
-    #app .log-head {
-      margin: 32px 4px 12px;
-      font-size: 12px; letter-spacing: 0.14em; color: var(--ink-soft);
-    }
-    #app .empty {
-      text-align: center; color: var(--ink-soft); font-size: 13px;
-      background: rgba(255,255,255,0.6);
-      border-radius: 26px;
-      padding: 28px 18px; line-height: 1.8;
-      box-shadow: var(--shadow);
-    }
-    #app .row {
-      display: flex; align-items: flex-start; gap: 12px;
-      background: rgba(255,255,255,0.78);
-      border-radius: 22px;
-      padding: 14px 16px;
-      margin-bottom: 10px;
-      box-shadow: 0 6px 18px -10px rgba(185,168,227,0.4);
-    }
-    #app .row .dur {
-      font-size: 16px; font-weight: 600;
-      font-variant-numeric: tabular-nums; min-width: 90px;
-      color: var(--peach-deep);
-    }
-    #app .row .meta { flex: 1; min-width: 0; }
-    #app .row .when { font-size: 11.5px; color: var(--ink-soft); letter-spacing: 0.03em; }
-    #app .row .memo {
-      margin-top: 5px; width: 100%;
-      background: transparent; border: none; outline: none;
-      color: var(--lav); font: inherit; font-size: 12.5px;
-    }
-    #app .row .memo::placeholder { color: #d8cfe8; }
-    #app .row .del {
-      background: none; border: none; cursor: pointer; color: #d8cfe8;
-      font-size: 16px; line-height: 1; padding: 2px 4px;
-      transition: color 0.2s;
-    }
-    #app .row .del:hover { color: var(--peach-deep); }
-
-    @media (prefers-reduced-motion: reduce) {
-      #app .bgcloud { animation: none !important; }
-      #app.waiting .cloudcard { animation: none; }
-      #app .track > i { transition: none; }
-    }
-  </style>
-
-  <div class="wrap">
-    <div class="bgcloud c1"></div>
-    <div class="bgcloud c2"></div>
-    <div class="bgcloud c3"></div>
-
-    <div class="mark">
-      <div class="title" id="mark"></div>
-      <div class="sub">기다린 시간, 몽글몽글 모아두기</div>
-    </div>
-
-    <div class="hero">
-      <div class="cloudcard">
-        <div class="bump3"></div>
-        <div class="clock" id="clock">00<span class="u">:</span>00<span class="u">:</span>00</div>
-        <div class="status" id="status">지금은 기다리는 중이 아니에요</div>
-        <button class="btn" id="btn">기다리기 시작</button>
-      </div>
-    </div>
-
-    <div class="total">
-      <div class="label">지금까지 총 기다린 시간</div>
-      <div class="big" id="total">0<em>분</em></div>
-      <div class="track"><i id="bar"></i></div>
-      <div class="track-label" id="barLabel"></div>
-      <div class="chips" id="chips"></div>
-    </div>
-
-    <div class="log-head">기다림 기록</div>
-    <div id="log"></div>
-  </div>
-
-  <script>
-    (function () {
-      const app = document.getElementById("app");
-      const KEY = "sookyoung_waiting_v1";
-      const WEEK = 7 * 24 * 3600; // seconds
-
-      let data = { name: "수경", sessions: [], activeStart: null };
-      let tick = null;
-
-      const $ = (id) => document.getElementById(id);
-
-      async function load() {
-        try {
-          const r = localStorage.getItem(KEY);
-          if (r) data = JSON.parse(r);
-        } catch (e) { /* first run: keep defaults */ }
-        if (!data.sessions) data.sessions = [];
-        if (data.activeStart) startTicking();
-        renderAll();
-      }
-      async function save() {
-        try { localStorage.setItem(KEY, JSON.stringify(data)); }
-        catch (e) { /* best effort */ }
-      }
-
-      function fmtClock(sec) {
-        sec = Math.max(0, Math.floor(sec));
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-        const p = (n) => String(n).padStart(2, "0");
-        return `${p(h)}<span class="u">:</span>${p(m)}<span class="u">:</span>${p(s)}`;
-      }
-      function fmtTotal(sec) {
-        sec = Math.floor(sec);
-        const d = Math.floor(sec / 86400);
-        const h = Math.floor((sec % 86400) / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        let out = "";
-        if (d) out += `${d}<em>일</em>`;
-        if (d || h) out += `${h}<em>시간</em>`;
-        out += `${m}<em>분</em>`;
-        return out;
-      }
-      function fmtDur(sec) {
-        sec = Math.floor(sec);
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-        if (h) return `${h}시간 ${m}분`;
-        if (m) return `${m}분 ${s}초`;
-        return `${s}초`;
-      }
-      function whenLabel(iso) {
-        const dt = new Date(iso);
-        const now = new Date();
-        const sameDay = dt.toDateString() === now.toDateString();
-        const y = new Date(now); y.setDate(now.getDate() - 1);
-        const isYday = dt.toDateString() === y.toDateString();
-        const hm = dt.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
-        if (sameDay) return `오늘 ${hm}`;
-        if (isYday) return `어제 ${hm}`;
-        return `${dt.getMonth() + 1}월 ${dt.getDate()}일 ${hm}`;
-      }
-
-      function totalSeconds() {
-        return data.sessions.reduce((a, s) => a + s.seconds, 0);
-      }
-
-      function renderMark() {
-        $("mark").innerHTML =
-          `<span class="nm">${escapeHtml(data.name)}</span><span class="dots">..</span>기다림`;
-        $("mark").querySelector(".nm").onclick = editName;
-      }
-      function editName() {
-        const el = $("mark");
-        const cur = data.name;
-        el.innerHTML = `<input id="nameIn" value="${escapeHtml(cur)}" maxlength="8" />`;
-        const inp = $("nameIn");
-        inp.focus(); inp.select();
-        const commit = () => {
-          const v = inp.value.trim();
-          data.name = v || "수경";
-          save(); renderMark(); renderHero();
-        };
-        inp.onblur = commit;
-        inp.onkeydown = (e) => { if (e.key === "Enter") inp.blur(); };
-      }
-
-      function renderHero() {
-        const waiting = !!data.activeStart;
-        app.classList.toggle("waiting", waiting);
-        if (waiting) {
-          const sec = (Date.now() - new Date(data.activeStart).getTime()) / 1000;
-          $("clock").innerHTML = fmtClock(sec);
-          $("status").textContent = `${data.name} 기다리는 중 · 구름 위에서 동동`;
-          $("btn").textContent = "왔다!";
-        } else {
-          $("clock").innerHTML = fmtClock(0);
-          $("status").textContent = "지금은 기다리는 중이 아니에요";
-          $("btn").textContent = "기다리기 시작";
-        }
-      }
-
-      function renderTotal() {
-        const t = totalSeconds();
-        $("total").innerHTML = t < 60 ? "0<em>분</em>" : fmtTotal(t);
-        const pct = Math.min(100, (t / WEEK) * 100);
-        $("bar").style.width = pct + "%";
-        if (t >= WEEK) {
-          $("barLabel").textContent = "일주일 돌파!";
-        } else {
-          $("barLabel").textContent = `'일주일'까지 ${pct.toFixed(0)}%`;
-        }
-        const cmp = [
-          { n: Math.floor(t / 7200), unit: "영화", suf: "편" },
-          { n: Math.floor(t / 300), unit: "라면", suf: "번" },
-          { n: Math.floor(t / 210), unit: "노래", suf: "곡" },
-        ].filter((c) => c.n >= 1).slice(0, 3);
-        $("chips").innerHTML = cmp
-          .map((c) => `<span class="chip">${c.unit} <b>${c.n}</b>${c.suf}</span>`)
-          .join("");
-      }
-
-      function renderLog() {
-        const log = $("log");
-        if (!data.sessions.length) {
-          log.innerHTML =
-            `<div class="empty">아직 기다린 기록이 없어요.<br>${escapeHtml(data.name)}을(를) 기다리게 되면<br>구름 버튼을 살짝 눌러줘요 ☁️</div>`;
-          return;
-        }
-        const items = [...data.sessions].reverse();
-        log.innerHTML = items
-          .map(
-            (s) => `
-          <div class="row" data-id="${s.id}">
-            <div class="dur">${fmtDur(s.seconds)}</div>
-            <div class="meta">
-              <div class="when">${whenLabel(s.start)}</div>
-              <input class="memo" placeholder="메모 (어디서 기다렸어?)" value="${escapeHtml(s.memo || "")}" />
-            </div>
-            <button class="del" title="삭제">&times;</button>
-          </div>`
-          )
-          .join("");
-        log.querySelectorAll(".row").forEach((row) => {
-          const id = Number(row.dataset.id);
-          row.querySelector(".memo").addEventListener("change", (e) => {
-            const s = data.sessions.find((x) => x.id === id);
-            if (s) { s.memo = e.target.value; save(); }
-          });
-          row.querySelector(".del").addEventListener("click", () => {
-            data.sessions = data.sessions.filter((x) => x.id !== id);
-            save(); renderTotal(); renderLog();
-          });
-        });
-      }
-
-      function renderAll() {
-        renderMark(); renderHero(); renderTotal(); renderLog();
-      }
-
-      function startTicking() {
-        clearInterval(tick);
-        tick = setInterval(() => {
-          const sec = (Date.now() - new Date(data.activeStart).getTime()) / 1000;
-          $("clock").innerHTML = fmtClock(sec);
-        }, 1000);
-      }
-
-      $("btn").addEventListener("click", () => {
-        if (data.activeStart) {
-          const start = data.activeStart;
-          const seconds = Math.round((Date.now() - new Date(start).getTime()) / 1000);
-          data.sessions.push({
-            id: Date.now(),
-            start,
-            end: new Date().toISOString(),
-            seconds,
-            memo: "",
-          });
-          data.activeStart = null;
-          clearInterval(tick);
-          save();
-          renderAll();
-        } else {
-          data.activeStart = new Date().toISOString();
-          startTicking();
-          save();
-          renderHero();
-        }
-      });
-
-      function escapeHtml(str) {
-        return String(str).replace(/[&<>"']/g, (c) =>
-          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-        );
-      }
-
-      load();
-    })();
-  </script>
+  <aside id="side">
+    <div class="logo">SPEXTRUM<small>CONTROL TOWER</small></div>
+    <nav id="pcnav"></nav>
+    <div class="foot">데이터는 이 브라우저에만 저장됩니다.<br>정기적으로 <b>내보내기</b>로 백업하세요.</div>
+  </aside>
+  <main id="main"></main>
 </div>
 
+<div id="tabs"><div class="row" id="mbnav"></div></div>
+<div id="sheetbg" onclick="closeSheet()"></div>
+<div id="sheet"><div class="grab"></div><div id="sheetItems"></div></div>
+
+<div id="ovl"><div id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════ seed data (엑셀에서 이관) ═══════════ */
+const SEED = {"v": 1, "settings": {"대분류": ["자사 브랜드/제품", "IP/콘텐츠", "B2B 프로젝트", "전시/팝업/행사", "영업/BD", "회사 운영"], "프로젝트 유형": ["제품개발", "콘텐츠 운영", "SNS/마케팅", "공간/전시", "행사/팝업", "영업/BD", "라이선싱", "내부운영", "정산/계약", "출판/교육"], "상태": ["진행중", "대기", "위험", "보류", "완료", "중단", "취소"], "단계": ["기획", "견적", "계약", "디자인", "샘플", "제작", "납품", "정산", "완료", "운영", "영업"], "우선순위": ["A", "B", "C", "D"], "계약 상태": ["제안 전", "견적 발송", "계약 완료", "선금 수령", "중도금 수령", "잔금 수령", "정산 완료"], "입금 상태": ["미청구", "청구 완료", "일부 입금", "전액 입금", "잔금 대기"], "액션 상태": ["예정", "진행중", "완료", "지연"], "결정 상태": ["결정대기", "검토중", "결정완료", "보류", "취소"], "지출구분": ["제작비", "외주비", "자재비", "물류비", "공간/설치비", "출장/행사비", "마케팅비", "권리/법무비", "기타"], "전략목적": ["수익", "레퍼런스", "시장진입", "관계유지", "IP확장", "테스트", "지원사업", "기타"], "원가센터": ["SPEXTRUM OBJET", "쓰리포", "호치", "광주&대구", "HSAD", "유디임팩트", "안성시", "팝업", "-", "새활용", "핑크퐁", "아울북 과학만화", "경영지원", "마케팅", "학산 굿즈", "콜라보", "루프탑", "과학만화", "스테이셔너리"], "삭제/중단 기준": ["중복입력만 삭제", "지출/인력 있으면 중단 처리", "계약 전이면 취소 가능", "중단사유는 Decision Log 기록"]}, "thresholds": {"low": 0.1, "warn": 0.25}, "ccList": ["SPEXTRUM OBJET", "쓰리포", "호치", "광주&대구", "HSAD", "안성시", "유디임팩트", "새활용", "핑크퐁", "과학만화", "경영지원", "마케팅", "루프탑", "팝업", "아울북 과학만화", "학산 굿즈", "콜라보", "스테이셔너리"], "projects": [{"code": "OBJ-001", "cat": "자사 브랜드/제품", "cc": "SPEXTRUM OBJET", "parent": "SPEXTRUM OBJET", "sub": "신제품 개발", "type": "제품개발", "goal": "신제품 목업", "owner": "-", "status": "진행중", "stage": "기획", "pri": "B", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "OBJ-002", "cat": "자사 브랜드/제품", "cc": "SPEXTRUM OBJET", "parent": "SPEXTRUM OBJET", "sub": "제품 발주 및 양산", "type": "제품개발", "goal": "제품 출고", "owner": "박수진", "status": "진행중", "stage": "", "pri": "", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "TF-001", "cat": "IP/콘텐츠", "cc": "쓰리포", "parent": "쓰리포", "sub": "웹툰", "type": "콘텐츠 운영", "goal": "정식 웹툰 업로드 일정 운영", "owner": "최원선", "status": "진행중", "stage": "운영", "pri": "B", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "TF-002", "cat": "IP/콘텐츠", "cc": "쓰리포", "parent": "쓰리포", "sub": "SNS 및 숏폼 콘텐츠", "type": "SNS/마케팅", "goal": "인스타그램/숏폼 채널 운영", "owner": "정보겸", "status": "진행중", "stage": "운영", "pri": "B", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "TF-003", "cat": "IP/콘텐츠", "cc": "쓰리포", "parent": "쓰리포", "sub": "라이선싱 사업", "type": "콘텐츠 운영", "goal": "짧은 영상 콘텐츠 제작 및 업로드", "owner": "김수경", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-07-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 10000000, "contract": "", "link": "", "note": ""}, {"code": "TF-004", "cat": "IP/콘텐츠", "cc": "쓰리포", "parent": "쓰리포", "sub": "굿즈", "type": "제품개발", "goal": "행사용/라이선싱용 굿즈 품목 확정 및 제작", "owner": "정보겸", "status": "진행중", "stage": "제작", "pri": "A", "due": "2026-08-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "TF-005", "cat": "IP/콘텐츠", "cc": "쓰리포", "parent": "쓰리포", "sub": "이모티콘", "type": "제품개발", "goal": "이모티콘 기획/제작/등록", "owner": "제갈금", "status": "진행중", "stage": "기획", "pri": "C", "due": "2026-08-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "HC-001", "cat": "자사 브랜드/제품", "cc": "호치", "parent": "호치", "sub": "젓가락세트", "type": "제품개발", "goal": "샘플 승인 및 생산처 확정", "owner": "정석주", "status": "진행중", "stage": "샘플", "pri": "B", "due": "2026-07-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 4704000, "contract": "선금 수령", "link": "", "note": ""}, {"code": "HC-002", "cat": "자사 브랜드/제품", "cc": "호치", "parent": "호치", "sub": "스테이셔너리 라인업", "type": "제품개발", "goal": "신규 문구 라인업 구성", "owner": "정석주", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-10-30", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 195000000, "contract": "계약 완료", "link": "", "note": ""}, {"code": "HC-003", "cat": "전시/팝업/행사", "cc": "호치", "parent": "호치", "sub": "팝업", "type": "행사/팝업", "goal": "팝업 컨셉 및 운영안 확정", "owner": "정석주", "status": "대기", "stage": "기획", "pri": "B", "due": "2026-12-30", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "계약 완료", "link": "", "note": ""}, {"code": "B2B-GD-001", "cat": "B2B 프로젝트", "cc": "광주&대구", "parent": "광주&대구", "sub": "광주", "type": "공간/전시", "goal": "광주 프로젝트 납품/운영", "owner": "-", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-11-30", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 28000000, "contract": "선금 수령", "link": "", "note": ""}, {"code": "B2B-GD-002", "cat": "B2B 프로젝트", "cc": "광주&대구", "parent": "광주&대구", "sub": "대구", "type": "공간/전시", "goal": "대구 프로젝트 납품/운영", "owner": "-", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-11-30", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 28000000, "contract": "선금 수령", "link": "", "note": ""}, {"code": "B2B-HSAD-001", "cat": "B2B 프로젝트", "cc": "HSAD", "parent": "HSAD", "sub": "샘플", "type": "제품개발", "goal": "샘플 제작 및 피드백 반영", "owner": "정예진", "status": "진행중", "stage": "샘플", "pri": "C", "due": "2026-07-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 13000000, "contract": "계약 완료", "link": "", "note": ""}, {"code": "B2B-UDI-001", "cat": "B2B 프로젝트", "cc": "유디임팩트", "parent": "유디임팩트", "sub": "도쿄기프트쇼", "type": "공간/전시", "goal": "도쿄기프트쇼 준비 및 운영", "owner": "엘레", "status": "진행중", "stage": "기획", "pri": "A", "due": "2026-09-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 41000000, "contract": "견적 발송", "link": "", "note": ""}, {"code": "B2B-AS-001", "cat": "B2B 프로젝트", "cc": "안성시", "parent": "안성시", "sub": "도쿄기프트쇼", "type": "공간/전시", "goal": "공간디자인/설치/컨시어지 운영", "owner": "엘레", "status": "진행중", "stage": "기획", "pri": "A", "due": "2026-09-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 85000000, "contract": "견적 발송", "link": "", "note": ""}, {"code": "EVT-001", "cat": "B2B 프로젝트", "cc": "안성시", "parent": "안성시", "sub": "공예페어", "type": "행사/팝업", "goal": "공예페어 참가/운영 준비", "owner": "김수아", "status": "대기", "stage": "기획", "pri": "B", "due": "2026-12-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "제안 전", "link": "", "note": ""}, {"code": "POP-001", "cat": "전시/팝업/행사", "cc": "팝업", "parent": "팝업", "sub": "meet with exhibition", "type": "영업/BD", "goal": "전시 관련 미팅 및 기회 정리", "owner": "두안", "status": "대기", "stage": "영업", "pri": "C", "due": "2026-09-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 5000000, "contract": "계약 완료", "link": "", "note": ""}, {"code": "POP-002", "cat": "전시/팝업/행사", "cc": "쓰리포", "parent": "쓰리포", "sub": "명동_쓰리포", "type": "행사/팝업", "goal": "명동 팝업 쓰리포 운영안", "owner": "-", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-10-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "POP-003", "cat": "전시/팝업/행사", "cc": "쓰리포", "parent": "쓰리포", "sub": "광주페어", "type": "행사/팝업", "goal": "광주페어 참가 및 현장 운영", "owner": "정보겸", "status": "진행중", "stage": "기획", "pri": "B", "due": "2026-09-09", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "계약 완료", "link": "", "note": ""}, {"code": "B2B-RT-001", "cat": "전시/팝업/행사", "cc": "팝업", "parent": "루프탑", "sub": "루프탑 공간 운영", "type": "행사/팝업", "goal": "", "owner": "", "status": "", "stage": "", "pri": "", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "B2B-UP-001", "cat": "B2B 프로젝트", "cc": "새활용", "parent": "새활용", "sub": "공간 디자인 및 설치", "type": "공간/전시", "goal": "공간 디자인 및 설치 완료", "owner": "김수아", "status": "진행중", "stage": "디자인", "pri": "A", "due": "2026-12-20", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 122000000, "contract": "계약 완료", "link": "", "note": ""}, {"code": "COL-PF-001", "cat": "영업/BD", "cc": "핑크퐁", "parent": "핑크퐁", "sub": "스펙트럼 콜라보", "type": "라이선싱", "goal": "콜라보 조건/상품 방향 협의", "owner": "김수아", "status": "대기", "stage": "영업", "pri": "B", "due": "2026-08-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "계약 완료", "link": "", "note": ""}, {"code": "OBJ-003", "cat": "자사 브랜드/제품", "cc": "SPEXTRUM OBJET", "parent": "SPEXTRUM OBJET", "sub": "영업 및 발주", "type": "제품개발", "goal": "라이선싱 굿즈 기회 관리", "owner": "", "status": "대기", "stage": "영업", "pri": "B", "due": "", "milestone": "Fariy 오픈 / 호텔 및 스파 영업메일", "action": "", "decision": "", "risk": "", "revenue": 200000000, "contract": "선금 수령", "link": "", "note": ""}, {"code": "PUB-AB-001", "cat": "IP/콘텐츠", "cc": "아울북 과학만화", "parent": "아울북 과학만화", "sub": "5권", "type": "출판/교육", "goal": "과학만화 5권 제작/관리", "owner": "최원선", "status": "진행중", "stage": "제작", "pri": "B", "due": "2026-12-04", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 55000000, "contract": "견적 발송", "link": "", "note": ""}, {"code": "OPS-001", "cat": "회사 운영", "cc": "경영지원", "parent": "경영지원", "sub": "월간 운영", "type": "내부운영", "goal": "계약/정산/회계 지원", "owner": "김진흥/박수진", "status": "진행중", "stage": "운영", "pri": "C", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "MKT-001", "cat": "회사 운영", "cc": "마케팅", "parent": "마케팅", "sub": "월간 마케팅", "type": "SNS/마케팅", "goal": "브랜드/제품 마케팅 실행 관리", "owner": "엘레", "status": "진행중", "stage": "운영", "pri": "B", "due": "", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "HS-001", "cat": "IP/콘텐츠", "cc": "학산 굿즈", "parent": "학산 굿즈", "sub": "뱃지", "type": "제품개발", "goal": "뱃지 제작 및 납품", "owner": "-", "status": "대기", "stage": "제작", "pri": "C", "due": "2026-07-31", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "제안 전", "link": "", "note": ""}, {"code": "COL-001", "cat": "영업/BD", "cc": "콜라보", "parent": "콜라보", "sub": "SPP", "type": "영업/BD", "goal": "SPP 미팅/후속자료 정리", "owner": "엘레", "status": "대기", "stage": "영업", "pri": "B", "due": "2026-09-01", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}, {"code": "COL-002", "cat": "영업/BD", "cc": "콜라보", "parent": "콜라보", "sub": "네트워킹데이", "type": "영업/BD", "goal": "네트워킹데이 참석/후속관리", "owner": "엘레", "status": "진행중", "stage": "영업", "pri": "B", "due": "2026-07-16", "milestone": "", "action": "", "decision": "", "risk": "", "revenue": 0, "contract": "", "link": "", "note": ""}], "weekly": [{"id": "w1", "week": "", "code": "OBJ-001", "todo": "", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w2", "week": "", "code": "OBJ-002", "todo": "", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w3", "week": "2026-07-06", "code": "TF-001", "todo": "등장인물 이름 체크", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w4", "week": "2026-07-06", "code": "TF-002", "todo": "", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w5", "week": "2026-07-06", "code": "TF-003", "todo": "베이징바이어 공유용 스타일가이드 전달/MG입금 해결 / 통역사님 입금 / 베이징 계약서 전달", "due": "2026-07-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w6", "week": "2026-07-06", "code": "TF-004", "todo": "1차 샘플 진행", "due": "2026-08-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w7", "week": "2026-07-06", "code": "TF-005", "todo": "이모티콘 방향성 체크", "due": "2026-08-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w8", "week": "2026-07-06", "code": "HC-001", "todo": "각인 할 디자인 완료 / 젓가락 구매 / 케이스 생산일자 지속체크", "due": "2026-07-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w9", "week": "2026-07-06", "code": "HC-002", "todo": "수정지시한 사항들 체크 후 샘플제작 지시 / 3D 디자인 업체 픽스하여 맡기기 / 입금업체 체크 / 호치 입금일 확정하여 기일 내에 입금", "due": "2026-10-30", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w10", "week": "2026-07-06", "code": "HC-003", "todo": "", "due": "2026-12-30", "status": "예정", "blocked": "", "doneAt": "", "next": "8월부터 팝업 할 곳 준비"}, {"id": "w11", "week": "2026-07-06", "code": "B2B-GD-001", "todo": "제품디자이너 확정", "due": "2026-11-30", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w12", "week": "2026-07-06", "code": "B2B-GD-002", "todo": "제품디자이너 확정 / 킥오프 일자 잡기", "due": "2026-11-30", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w13", "week": "2026-07-06", "code": "B2B-HSAD-001", "todo": "샘플 수정 할 것들 보완하여 2차샘플진행", "due": "2026-07-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w14", "week": "2026-07-06", "code": "B2B-UDI-001", "todo": "전체 일정 잡기 / 부스 디자인 방향성 픽스 / 품목 유통조건 정리", "due": "2026-09-01", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w15", "week": "2026-07-06", "code": "B2B-AS-001", "todo": "전체 일정 잡기 / 부스 디자인 방향성 픽스 / 견적서 작성", "due": "2026-09-01", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w16", "week": "2026-07-06", "code": "EVT-001", "todo": "", "due": "2026-12-01", "status": "예정", "blocked": "", "doneAt": "", "next": "10월부터 시작"}, {"id": "w17", "week": "2026-07-06", "code": "POP-001", "todo": "", "due": "2026-09-01", "status": "예정", "blocked": "", "doneAt": "", "next": "부스위치 나오면 디자인 진행"}, {"id": "w18", "week": "2026-07-06", "code": "POP-002", "todo": "", "due": "2026-10-01", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w19", "week": "2026-07-06", "code": "POP-003", "todo": "킥오프 및 전시 준비", "due": "2026-09-09", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w20", "week": "2026-07-06", "code": "B2B-RT-001", "todo": "뮤지션 / 참가아티스트 리스트 정리", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w21", "week": "2026-07-06", "code": "B2B-UP-001", "todo": "내용 최종방향성 결정 ", "due": "2026-12-20", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w22", "week": "2026-07-06", "code": "COL-PF-001", "todo": "", "due": "2026-08-31", "status": "예정", "blocked": "", "doneAt": "", "next": "(결과 대기) / 스펙트럼 콜라보 제품 7월말부터 진행"}, {"id": "w23", "week": "2026-07-06", "code": "OBJ-003", "todo": "프랑스 수출 / 이탈리아 수출 / Fariy 오픈 / 호텔 및 스파 영업메일", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w24", "week": "2026-07-06", "code": "PUB-AB-001", "todo": "계약서 직인", "due": "2026-12-04", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w25", "week": "2026-07-06", "code": "OPS-001", "todo": "-", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w26", "week": "2026-07-06", "code": "MKT-001", "todo": "-", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w27", "week": "2026-07-06", "code": "HS-001", "todo": "뱃지 가격 체크 후 공유", "due": "2026-07-31", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w28", "week": "2026-07-06", "code": "COL-001", "todo": "-", "due": "2026-09-01", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w29", "week": "2026-07-06", "code": "COL-002", "todo": "미팅 업체 비지터북 바탕으로 메일 송부 / 대표님 보고", "due": "2026-07-16", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w30", "week": "", "code": "", "todo": "사무실 자리 위치 잡기", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}, {"id": "w31", "week": "", "code": "", "todo": "전체 인력분배", "due": "", "status": "예정", "blocked": "", "doneAt": "", "next": ""}], "decisions": [{"id": "d1", "date": "", "code": "OBJ-001", "issue": "1. 컨셉영상 작업 할 품목\n2. AI모델 진행 희망여부 ", "decider": "", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d2", "date": "", "code": "TF-001", "issue": "시즌3 시놉시스 보고", "decider": "", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d3", "date": "", "code": "TF-003", "issue": "", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d4", "date": "", "code": "TF-004", "issue": "1. 보겸님 굿즈 예산판매가 및 마진 정리표\n-> 양산 진행 확정 품목 결정\n2. 알렉시아 그래픽 굿즈 품목 정하기", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d5", "date": "", "code": "HC-003", "issue": "호치 프로젝트 손익계산 계획 보고", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d6", "date": "", "code": "B2B-HSAD-001", "issue": "플베 조립장소 픽스", "decider": "공장장님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d7", "date": "", "code": "B2B-UDI-001", "issue": "호텔 및 항공권 픽스", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d8", "date": "", "code": "OPS-001", "issue": "1. 중국 지사 업종/업태 결정 (유통업,서비스에 따른)\n2. 명동 사무실 이전계획", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}, {"id": "d9", "date": "", "code": "COL-002", "issue": "", "decider": "대표님", "options": "", "decision": "", "followup": "", "due": "", "status": "결정대기"}], "finance": [{"code": "OBJ-001", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "OBJ-002", "client": "", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "TF-001", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "TF-002", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "TF-003", "client": "", "total": 10000000, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "TF-004", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "TF-005", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "HC-001", "client": "드림컴어스", "total": 4704000, "contract": "선금 수령", "adv": 3000000, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "HC-002", "client": "공동제작", "total": 195000000, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "HC-003", "client": "공동제작", "total": 0, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-GD-001", "client": "정부지원사업", "total": 28000000, "contract": "선금 수령", "adv": 19600000, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-GD-002", "client": "정부지원사업", "total": 28000000, "contract": "선금 수령", "adv": 19600000, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-HSAD-001", "client": "HSAD", "total": 13000000, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-UDI-001", "client": "유디임팩트", "total": 41000000, "contract": "견적 발송", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-AS-001", "client": "유디임팩트", "total": 85000000, "contract": "견적 발송", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "EVT-001", "client": "유디임팩트", "total": 0, "contract": "제안 전", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "POP-001", "client": "정부지원사업", "total": 5000000, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "POP-002", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "POP-003", "client": "정부지원사업", "total": 0, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-WF-001", "client": "", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "B2B-UP-001", "client": "새활용프라자", "total": 122000000, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "COL-PF-001", "client": "-", "total": 0, "contract": "계약 완료", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "OBJ-003", "client": "-", "total": 200000000, "contract": "선금 수령", "adv": 200000000, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "PUB-AB-001", "client": "아울북", "total": 55000000, "contract": "견적 발송", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "OPS-001", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "MKT-001", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "HS-001", "client": "학산문화사", "total": 0, "contract": "제안 전", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "COL-001", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}, {"code": "COL-002", "client": "-", "total": 0, "contract": "", "adv": 0, "mid": 0, "bal": 0, "tax": "", "expDate": "", "note": ""}], "people": [{"name": "김수경", "team": "실무총괄", "roles": {}, "alloc": {"SPEXTRUM OBJET": 0.1, "쓰리포": 0.1, "호치": 0.1, "광주&대구": 0.1, "HSAD": 0.1, "안성시": 0.1, "유디임팩트": 0.1, "새활용": 0.1, "핑크퐁": 0.1, "과학만화": 0.1, "경영지원": 0.1, "마케팅": 0.1, "루프탑": 0.1}, "memo": ""}, {"name": "정예진", "team": "시각디자인", "roles": {"SPEXTRUM OBJET": "시각디자인\n&패키지", "호치": "시각디자인\n&패키지\n&부스그래픽 (서포트)", "HSAD": "리더\n샘플/패키지", "안성시": "부스그래픽\n&발주서포트", "새활용": "시각물 그래픽", "핑크퐁": "시각디자인\n&패키지", "마케팅": "SNS 콘텐츠\n자사사이트\n시각화", "루프탑": "쇼룸 시각디자인"}, "alloc": {"SPEXTRUM OBJET": 0.1, "쓰리포": 0.0, "호치": 0.2, "광주&대구": 0.0, "HSAD": 0.3, "안성시": 0.2, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.1, "루프탑": 0.1}, "memo": ""}, {"name": "박수진", "team": "경영지원", "roles": {"SPEXTRUM OBJET": "기제품 발주\n공장소통", "호치": "서류", "HSAD": "고대 조립 관련", "핑크퐁": "서류", "경영지원": "회계&지원"}, "alloc": {"SPEXTRUM OBJET": 0.3, "쓰리포": 0.0, "호치": 0.1, "광주&대구": 0.0, "HSAD": 0.1, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.6, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "엘레", "team": "사업운영 및 마케팅", "roles": {"쓰리포": "해외 IP사업", "HSAD": "외국직원\n소통지원", "안성시": "공동 PM (안성시 메인)\n일본회사\n해외전시 소통", "마케팅": "마케팅"}, "alloc": {"SPEXTRUM OBJET": 0.2, "쓰리포": 0.3, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.3, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.2, "루프탑": 0.0}, "memo": ""}, {"name": "김수아", "team": "운영 및 마케팅", "roles": {"SPEXTRUM OBJET": "국내 영업", "호치": "팝업 운영", "안성시": "공동 PM (유디임팩트 메인)\n일본전시 운송\n전시 VMD", "새활용": "PM 서포트\n전시 서포트", "핑크퐁": "리더\n프로젝트 매니져", "마케팅": "국내 마케팅", "루프탑": "리더\n프로그램 운영"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.1, "유디임팩트": 0.35, "새활용": 0.35, "핑크퐁": 0.1, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.2, "루프탑": 0.0}, "memo": ""}, {"name": "김보강", "team": "시각디자인 및 운영", "roles": {"SPEXTRUM OBJET": "시각디자인\n&패키지", "호치": "시각디자인\n&패키지 (서포트)\n&부스그래픽            팝업운영 (서포트)", "HSAD": "샘플\n디자인파일", "유디임팩트": "부스그래픽\n&발주서포트", "새활용": "전시 공간기획", "핑크퐁": "시각디자인\n&패키지", "마케팅": "콘텐츠"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.2, "광주&대구": 0.0, "HSAD": 0.2, "안성시": 0.1, "유디임팩트": 0.1, "새활용": 0.1, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.5, "루프탑": 0.0}, "memo": ""}, {"name": "정보겸", "team": "콘텐츠 디자인", "roles": {"쓰리포": "리더\n콘텐츠\n디자인", "호치": " "}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 1.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "김진흥", "team": "경영지원", "roles": {"호치": "서류", "광주&대구": "서류", "핑크퐁": "서류", "과학만화": "서류", "경영지원": "리더\n지원사업 총괄\n프로젝트 서류 관련 ", "루프탑": "서류"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.3, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.6, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "정석주", "team": "제품디자인", "roles": {"SPEXTRUM OBJET": "제품디자인", "호치": "리더\n호치젓가락\n제품디자인\n발주/생산체크", "광주&대구": "제품디자인", "HSAD": "샘플 발주", "새활용": "자원순환 꾸러미", "핑크퐁": "제품디자인 구조"}, "alloc": {"SPEXTRUM OBJET": 0.1, "쓰리포": 0.0, "호치": 0.4, "광주&대구": 0.1, "HSAD": 0.2, "안성시": 0.0, "유디임팩트": 0.1, "새활용": 0.1, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "두안", "team": "해외영업/마케팅", "roles": {"SPEXTRUM OBJET": "오더 최종체크", "쓰리포": "국내외 영업 서포트", "안성시": "통역사 구하기\n뉴스레터\n컨시어지", "유디임팩트": "통역사 구하기", "마케팅": "리더\n해외영업\n및 마케팅"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.3, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.7, "루프탑": 0.0}, "memo": ""}, {"name": "최원선", "team": "웹툰/드로잉", "roles": {"쓰리포": "웹툰\n만화\n드로잉", "과학만화": "리더\n만화 작업"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 1.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "맹사성", "team": "제품/공간디자인", "roles": {"SPEXTRUM OBJET": "라팔레트 리더", "안성시": "공간디자인", "유디임팩트": "공간디자인 (서포트)", "새활용": "공간디자인 (서포트)"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.3, "유디임팩트": 0.3, "새활용": 0.3, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "알렉시아", "team": "디자인 인턴", "roles": {"SPEXTRUM OBJET": "시각 디자인", "쓰리포": "시각 디자인", "마케팅": "마케팅/영업\n자료"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 1.0, "루프탑": 0.0}, "memo": ""}, {"name": "강민승", "team": "마케팅 및 컨텐츠", "roles": {"안성시": "서포트 / 스케줄 관리 및 가구 대여", "유디임팩트": "서포트 / 스케줄 관리 및 가구 대여", "새활용": "서포트 / 전시 관련 업무 (보강님 서포트)", "핑크퐁": "서포트 / 스케줄 관리 ", "마케팅": "마케팅/영업\n자료", "루프탑": "서포트 / 프로그램 운영"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 1.0, "루프탑": 0.0}, "memo": ""}, {"name": "베이샤", "team": "콘텐츠 디자인", "roles": {"SPEXTRUM OBJET": "시각 디자인", "쓰리포": "콘텐츠 디자인", "마케팅": "마케팅\n콘텐츠"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 1.0, "루프탑": 0.0}, "memo": ""}, {"name": "제갈금", "team": "콘텐츠 디자인", "roles": {"쓰리포": "콘텐츠 디자인"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 1.0, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "김지선", "team": "공간디자인 및 운영", "roles": {"호치": "팝업 PM 및 공간", "안성시": "공간디자인 (서포트)", "유디임팩트": "공간디자인", "새활용": "리더\nPM 및 공간"}, "alloc": {"SPEXTRUM OBJET": 0.2, "쓰리포": 0.0, "호치": 0.4, "광주&대구": 0.4, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.0, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "이다예", "team": "콘텐츠 제작 및 기획", "roles": {"쓰리포": "웹툰 스크립트\n영상 제작", "마케팅": "AI활용 콘텐츠", "루프탑": "공간 운영 서포트"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.5, "호치": 0.0, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.2, "핑크퐁": 0.0, "과학만화": 0.1, "경영지원": 0.0, "마케팅": 0.0, "루프탑": 0.0}, "memo": ""}, {"name": "기명섭", "team": "콘텐츠 제작 및 생산", "roles": {"호치": "제품 발주", "핑크퐁": "제품 발주", "마케팅": "AI활용 콘텐츠 및 AI모델 제작"}, "alloc": {"SPEXTRUM OBJET": 0.0, "쓰리포": 0.0, "호치": 0.3, "광주&대구": 0.0, "HSAD": 0.0, "안성시": 0.0, "유디임팩트": 0.0, "새활용": 0.0, "핑크퐁": 0.1, "과학만화": 0.0, "경영지원": 0.0, "마케팅": 0.3, "루프탑": 0.3}, "memo": ""}], "rates": [{"name": "김수경", "role": "총괄", "monthly": 4000000, "apply": "적용", "note": ""}, {"name": "정예진", "role": "시각디자인 & 패키지", "monthly": 2500000, "apply": "적용", "note": ""}, {"name": "박수진", "role": "발주/공장소통", "monthly": 3000000, "apply": "적용", "note": ""}, {"name": "엘레", "role": "해외전시/일본B2B", "monthly": 3000000, "apply": "적용", "note": ""}, {"name": "김수아", "role": "국내전시/PM", "monthly": 3500000, "apply": "적용", "note": ""}, {"name": "김보강", "role": "시각디자인 & 패키지", "monthly": 2500000, "apply": "적용", "note": ""}, {"name": "정보겸", "role": "콘텐츠 디자인", "monthly": 3300000, "apply": "적용", "note": ""}, {"name": "김진흥", "role": "서류/정산", "monthly": 4000000, "apply": "적용", "note": ""}, {"name": "정석주", "role": "제품디자인/발주", "monthly": 2500000, "apply": "적용", "note": ""}, {"name": "두안", "role": "통역/컨시어지/해외영업", "monthly": 3100000, "apply": "적용", "note": ""}, {"name": "최원선", "role": "웹툰/드로잉", "monthly": 2500000, "apply": "적용", "note": ""}, {"name": "맹사성", "role": "공간디자인", "monthly": 3000000, "apply": "적용", "note": ""}, {"name": "알렉시아", "role": "마케팅/영업자료", "monthly": 300000, "apply": "적용", "note": "(단가 출처: 기존 '해외인턴' 행)"}, {"name": "강민승", "role": "", "monthly": 300000, "apply": "적용", "note": "(단가 출처: 기존 '해회인턴' 행)"}, {"name": "베이샤", "role": "마케팅 콘텐츠", "monthly": 300000, "apply": "적용", "note": ""}, {"name": "제갈금", "role": "쓰리포 콘텐츠/웹툰채색", "monthly": 2500000, "apply": "적용", "note": ""}, {"name": "김지선", "role": "제품디자인", "monthly": 2500000, "apply": "적용", "note": "(단가 출처: 기존 '디자이너' 행)"}, {"name": "이다예", "role": "총괄/결정", "monthly": 0, "apply": "적용", "note": "(단가 출처: 기존 '대표님' 행)"}, {"name": "기명섭", "role": "제품디자인", "monthly": 3800000, "apply": "적용", "note": "(단가 출처: 기존 '제품팀장' 행)"}], "expenses": [{"id": "e1", "date": "", "code": "HC-002", "kind": "제작비", "item": "키캡제작", "vendor": "비다스토리", "amount": 3000000, "payState": "청구대기", "evidence": "", "memo": ""}, {"id": "e2", "date": "", "code": "HC-002", "kind": "외주비", "item": "호치 마진", "vendor": "", "amount": 15000000, "payState": "", "evidence": "", "memo": ""}, {"id": "e3", "date": "", "code": "HC-002", "kind": "공간/설치비", "item": "호치 팝업", "vendor": "", "amount": 10000000, "payState": "", "evidence": "", "memo": ""}, {"id": "e4", "date": "", "code": "HC-001", "kind": "제작비", "item": "젓가락", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}, {"id": "e5", "date": "", "code": "HC-001", "kind": "제작비", "item": "케이스+내부EVA", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}, {"id": "e6", "date": "", "code": "HC-001", "kind": "제작비", "item": "각인 및 포장", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}, {"id": "e7", "date": "", "code": "B2B-UDI-001", "kind": "출장/행사비", "item": "호텔 숙박", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}, {"id": "e8", "date": "", "code": "B2B-UDI-001", "kind": "출장/행사비", "item": "", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}, {"id": "e9", "date": "", "code": "B2B-UDI-001", "kind": "출장/행사비", "item": "", "vendor": "", "amount": 0, "payState": "", "evidence": "", "memo": ""}], "profitInputs": [{"cc": "SPEXTRUM OBJET", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}, {"cc": "쓰리포", "months": 1, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "호치", "months": 3, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "광주&대구", "months": 1, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "HSAD", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}, {"cc": "유디임팩트", "months": 1, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "안성시", "months": 1, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "팝업", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "-", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "새활용", "months": 1, "extBudget": 0, "reserveRate": 0.15, "purpose": "", "memo": ""}, {"cc": "핑크퐁", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "아울북 과학만화", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "경영지원", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "마케팅", "months": 1, "extBudget": 0, "reserveRate": 0.05, "purpose": "", "memo": ""}, {"cc": "학산 굿즈", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}, {"cc": "콜라보", "months": 1, "extBudget": 0, "reserveRate": 0.1, "purpose": "", "memo": ""}, {"cc": "루프탑", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}, {"cc": "과학만화", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}, {"cc": "스테이셔너리", "months": 1, "extBudget": 0, "reserveRate": 0.12, "purpose": "", "memo": ""}]};
+
+/* ═══════════ storage ═══════════ */
+const LS_KEY='spx_ct_v1', SNAP_KEY='spx_ct_snaps';
+let DB;
+try{ DB = JSON.parse(localStorage.getItem(LS_KEY)) || structuredClone(SEED); }
+catch(e){ DB = structuredClone(SEED); }
+/* v2 마이그레이션: 예산 라인 · 결제상태 목록 */
+DB.budgets = DB.budgets || [];               // {id, cc, kind, amount, memo}
+DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
+// daily snapshot on load (max 10)
+(function(){
+  try{
+    const snaps = JSON.parse(localStorage.getItem(SNAP_KEY)||'[]');
+    const today = new Date().toISOString().slice(0,10);
+    if(!snaps.find(s=>s.d===today)){
+      snaps.unshift({d:today, t:new Date().toISOString(), data:DB});
+      while(snaps.length>10) snaps.pop();
+      localStorage.setItem(SNAP_KEY, JSON.stringify(snaps));
+    }
+  }catch(e){}
+})();
+let saveTimer=null;
+function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('저장 실패: 저장공간 확인'); }
+},300); }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1600); }
+
+/* ═══════════ helpers ═══════════ */
+const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nl = s => esc(s).replace(/\n/g,'<br>');
+const won = n => n||n===0 ? '₩'+Math.round(n).toLocaleString('ko-KR') : '';
+const wonS = n => !n ? '-' : (Math.abs(n)>=100000000 ? (n/100000000).toFixed(1).replace(/\.0$/,'')+'억' : Math.abs(n)>=10000 ? Math.round(n/10000).toLocaleString()+'만' : n.toLocaleString());
+const pct = v => (v*100).toFixed(1).replace(/\.0$/,'')+'%';
+const today0 = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+function dday(due){ if(!due) return null; const d=new Date(due+'T00:00:00'); if(isNaN(d)) return null; return Math.round((d-today0())/86400000); }
+function ddayHtml(v){ if(v===null) return '<span class="hint">-</span>';
+  const cls = v<0?'over':(v<=7?'soon':''); const label = v===0?'D-Day':(v<0?'D+'+(-v):'D-'+v);
+  return `<span class="dd num ${cls}">${label}</span>`; }
+const projOf = code => DB.projects.find(p=>p.code===code);
+const pname = p => p ? (p.parent && p.sub ? p.parent+' / '+p.sub : (p.sub||p.parent||p.code)) : '';
+const pnameByCode = code => { const p=projOf(code); return p?pname(p):code; };
+function statusBadge(s){ const m={'진행중':'g','완료':'bl','위험':'rd','중단':'rd','취소':'gy','대기':'gy','보류':'gy','지연':'a'}; return `<span class="b ${m[s]||'gy'}">${esc(s||'-')}</span>`; }
+function profBadge(s){ const m={'정상':'g','주의':'a','저마진':'a','적자':'rd','매출미입력':'gy'}; return `<span class="b ${m[s]||'gy'}">${esc(s)}</span>`; }
+function uid(pre){ return pre+Date.now().toString(36)+Math.random().toString(36).slice(2,5); }
+function opt(list, sel){ return ['<option value=""></option>'].concat(list.map(v=>`<option ${v===sel?'selected':''}>${esc(v)}</option>`)).join(''); }
+
+/* ═══════════ 수익성 엔진 (원가센터 기준) ═══════════ */
+function rateOf(name){ const r=DB.rates.find(x=>x.name===name && x.apply!=='미적용'); return r? (r.monthly||0):0; }
+function profitInput(cc){
+  let pi = DB.profitInputs.find(x=>x.cc===cc);
+  if(!pi){ pi={cc, months:1, extBudget:0, reserveRate:0.1, purpose:'', memo:''}; DB.profitInputs.push(pi); }
+  return pi;
+}
+/* 예산 라인: 원가센터 × 지출구분 */
+function budgetsOf(cc){ return DB.budgets.filter(b=>b.cc===cc); }
+function ccExtBudget(cc){ const bl=budgetsOf(cc);
+  return bl.length ? bl.reduce((a,b)=>a+(+b.amount||0),0) : (profitInput(cc).extBudget||0); }
+const isPaid = e => e.payState==='지급완료';
+function ccExpenses(cc){ return DB.expenses.filter(e=>{ const p=projOf(e.code); return p&&p.cc===cc; }); }
+/* 예산 대비 집행: 지출구분 라인별 예산/확정(전체 입력분)/지급(지급완료분) */
+function budLines(cc){
+  const map={};
+  budgetsOf(cc).forEach(b=>{ const k=b.kind||'(구분없음)';
+    (map[k]=map[k]||{kind:k,budget:0,committed:0,paid:0,memo:''}).budget+=(+b.amount||0);
+    if(b.memo) map[k].memo=(map[k].memo?map[k].memo+' / ':'')+b.memo; });
+  ccExpenses(cc).forEach(e=>{ const k=e.kind||'(구분없음)';
+    const l=(map[k]=map[k]||{kind:k,budget:0,committed:0,paid:0,memo:''});
+    l.committed+=(+e.amount||0); if(isPaid(e)) l.paid+=(+e.amount||0); });
+  return Object.values(map);
+}
+function ccCalc(cc){
+  const pi = profitInput(cc);
+  const projs = DB.projects.filter(p=>p.cc===cc);
+  const revenue = projs.reduce((a,p)=>a+(+p.revenue||0),0);
+  const labor = DB.people.reduce((a,per)=>a + (per.alloc[cc]||0)*rateOf(per.name), 0) * (pi.months||1);
+  const extBudget = ccExtBudget(cc);
+  const reserve = extBudget*(pi.reserveRate||0);
+  const totalBudget = extBudget+reserve+labor;
+  const estMargin = revenue-totalBudget;                       // 계획마진
+  const estRate = revenue>0 ? estMargin/revenue : 0;
+  const exps = ccExpenses(cc);
+  const committed = exps.reduce((a,e)=>a+(+e.amount||0),0);    // 확정액 (입력된 전체)
+  const paid = exps.reduce((a,e)=>a+(isPaid(e)?+e.amount:0),0);// 지급완료분
+  const actExt = committed;
+  // 전망: 라인별로 확정이 예산을 넘으면 확정을, 아니면 예산을 쓴다 (미집행 예산 포함)
+  const lines = budLines(cc);
+  const fcExt = lines.reduce((a,l)=>a+Math.max(l.budget,l.committed),0);
+  const fcMargin = revenue - labor - fcExt;                    // 전망마진
+  const fcRate = revenue>0 ? fcMargin/revenue : 0;
+  const actCost = labor+committed, actMargin = revenue-actCost;// 확정마진
+  const actRate = revenue>0 ? actMargin/revenue : 0;
+  const overLines = lines.filter(l=>l.budget>0 && l.committed>l.budget).length;
+  let state;
+  const th = DB.thresholds||{low:.1,warn:.25};
+  if(revenue<=0) state='매출미입력';
+  else if(estRate<0) state='적자';
+  else if(estRate<th.low) state='저마진';
+  else if(estRate<th.warn) state='주의';
+  else state='정상';
+  return {cc, pi, count:projs.length, revenue, labor, extBudget, reserve, totalBudget, estMargin, estRate,
+    committed, paid, fcExt, fcMargin, fcRate, actExt, actCost, actMargin, actRate, lines, overLines, state};
+}
+function allCC(){
+  const set = new Set(DB.ccList);
+  DB.projects.forEach(p=>{ if(p.cc && p.cc!=='-') set.add(p.cc); });
+  return [...set];
+}
+function projProf(p){ return p.cc && p.cc!=='-' ? ccCalc(p.cc) : null; }
+
+/* 재무 자동 */
+function finCalc(f){ const paid=(+f.adv||0)+(+f.mid||0)+(+f.bal||0); return {paid, due:(+f.total||0)-paid}; }
+/* 인력 자동 */
+function personCalc(per){ const t=Object.values(per.alloc).reduce((a,v)=>a+(+v||0),0);
+  return {total:t, rest:+(1-t).toFixed(2), state: t>1.001?'과부하':(t<0.9?'여유':'적정')}; }
+
+/* ═══════════ navigation ═══════════ */
+const VIEWS=[
+ {id:'dash', name:'대시보드', ic:'◎'},
+ {id:'proj', name:'프로젝트', ic:'▤'},
+ {id:'week', name:'주간액션', ic:'☑'},
+ {id:'prof', name:'수익성', ic:'₩'},
+ {id:'bud', name:'예산·집행', ic:'◧'},
+ {id:'dec', name:'결정로그', ic:'✎'},
+ {id:'fin', name:'재무', ic:'▦'},
+ {id:'ppl', name:'인력분배', ic:'👥'},
+ {id:'exp', name:'지출', ic:'▨'},
+ {id:'set', name:'설정·백업', ic:'⚙'},
+];
+const MOBILE_MAIN=['dash','proj','week','prof'];
+let CUR='dash';
+function go(id){ CUR=id; closeSheet(); render(); window.scrollTo(0,0); }
+function renderNav(){
+  document.getElementById('pcnav').innerHTML = VIEWS.map(v=>
+    `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join('');
+  const mb = MOBILE_MAIN.map(id=>{ const v=VIEWS.find(x=>x.id===id);
+    return `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span class="ic">${v.ic}</span>${v.name}</button>`; }).join('');
+  document.getElementById('mbnav').innerHTML = mb +
+    `<button class="${!MOBILE_MAIN.includes(CUR)?'on':''}" onclick="openSheet()"><span class="ic">≡</span>더보기</button>`;
+  document.getElementById('sheetItems').innerHTML = VIEWS.filter(v=>!MOBILE_MAIN.includes(v.id)).map(v=>
+    `<button class="item" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join('');
+}
+function openSheet(){ document.getElementById('sheet').classList.add('show'); document.getElementById('sheetbg').classList.add('show'); }
+function closeSheet(){ document.getElementById('sheet').classList.remove('show'); document.getElementById('sheetbg').classList.remove('show'); }
+
+/* ═══════════ status strip ═══════════ */
+function stripHtml(){
+  const all=DB.projects, run=all.filter(p=>p.status==='진행중'), risk=all.filter(p=>p.status==='위험');
+  const over=all.filter(p=>!['완료','취소','중단'].includes(p.status)&&dday(p.due)!==null&&dday(p.due)<0);
+  const week=DB.weekly.filter(w=>w.status!=='완료'&&w.todo);
+  const ccAll=allCC().map(ccCalc);
+  const lowm=ccAll.filter(c=>['저마진','적자'].includes(c.state));
+  const overBud=ccAll.reduce((a,c)=>a+c.overLines,0);
+  const overload=DB.people.filter(p=>personCalc(p).state==='과부하');
+  const c=(n,lbl,cls)=>`<div class="chip ${n>0?cls:''}"><b class="num">${n}</b>${lbl}</div>`;
+  return `<div id="strip">
+    <div class="chip"><b class="num">${all.length}</b>전체</div>
+    <div class="chip"><b class="num">${run.length}</b>진행중</div>
+    ${c(risk.length,'위험','alert')}${c(over.length,'마감초과','alert')}
+    ${c(week.length,'미완 액션','')} ${c(lowm.length,'저마진·적자','warn')} ${c(overBud,'예산초과 라인','alert')} ${c(overload.length,'과부하 인원','warn')}
+  </div>`;
+}
+
+/* ═══════════ views ═══════════ */
+function render(){
+  renderNav();
+  const m=document.getElementById('main');
+  m.innerHTML = stripHtml() + ({dash:vDash,proj:vProj,week:vWeek,dec:vDec,fin:vFin,ppl:vPpl,exp:vExp,prof:vProf,bud:vBud,set:vSet}[CUR])();
+}
+
+/* ── 대시보드 ── */
+function vDash(){
+  const watch = DB.projects.filter(p=>{
+    if(['완료','취소','중단'].includes(p.status)) return false;
+    const d=dday(p.due), pr=projProf(p);
+    return p.status==='위험' || (d!==null&&d<=30) || (pr&&['저마진','적자'].includes(pr.state)) || p.decision || p.risk;
+  }).sort((a,b)=>{ const da=dday(a.due), db_=dday(b.due);
+    return (da===null?9999:da)-(db_===null?9999:db_); });
+  const probs = allCC().map(ccCalc).filter(c=>c.state!=='정상' && (c.count>0||c.labor>0));
+  return `<h1 class="page">오늘 볼 것만 봅니다</h1>
+  <p class="pagesub">입력은 프로젝트·지출·인력·수익성 탭에서, 여기는 요약만.</p>
+  <div class="card"><div class="hd"><h2>오늘 확인할 프로젝트</h2><span class="hint">위험 · 마감 30일 이내 · 저마진 · 결정/리스크 보유</span></div>
+  <div class="tw"><table><thead><tr><th>프로젝트</th><th>Owner</th><th>상태</th><th>D-Day</th><th>이번 달 액션</th><th>결정/리스크</th><th>수익성</th></tr></thead><tbody>
+  ${watch.map(p=>{ const pr=projProf(p);
+    return `<tr class="click" onclick="editProj('${p.code}')">
+      <td><b>${esc(pname(p))}</b><div class="hint">${esc(p.code)} · ${esc(p.cc)}</div></td>
+      <td>${esc(p.owner||'-')}</td><td>${statusBadge(p.status)}</td><td>${ddayHtml(dday(p.due))}</td>
+      <td class="mini">${nl(p.action)||'<span class="hint">-</span>'}</td>
+      <td class="mini">${[p.decision,p.risk].filter(Boolean).map(nl).join('<br>')||'<span class="hint">-</span>'}</td>
+      <td>${pr?profBadge(pr.state):'-'}</td></tr>`; }).join('') || '<tr><td colspan="7" class="empty">확인할 항목이 없습니다.</td></tr>'}
+  </tbody></table></div></div>
+  <div class="card"><div class="hd"><h2>수익성 체크 · 원가센터 기준</h2><span class="sp"></span><button class="btn ghost sm" onclick="go('prof')">전체 보기 →</button></div>
+  <div class="tw"><table><thead><tr><th>원가센터</th><th class="r">예상매출</th><th class="r">총지출예산</th><th class="r">예상 실질마진율</th><th>상태</th><th>메모</th></tr></thead><tbody>
+  ${probs.map(c=>`<tr><td><b>${esc(c.cc)}</b></td><td class="r num">${wonS(c.revenue)}</td><td class="r num">${wonS(c.totalBudget)}</td>
+    <td class="r num">${c.revenue>0?pct(c.estRate):'-'}</td><td>${profBadge(c.state)}</td><td class="mini">${esc(c.pi.memo||'')}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">문제 있는 원가센터가 없습니다.</td></tr>'}
+  </tbody></table></div></div>
+  <div class="card"><div class="hd"><h2>사용 기준</h2></div><div class="bd"><ul class="notes">
+    <li>입력은 <b>프로젝트 / 지출 / 인력분배 / 수익성</b> 탭에서 합니다.</li>
+    <li>중단·취소는 삭제하지 말고 <b>상태값</b>으로 남깁니다. 사유는 결정로그에 기록.</li>
+    <li>원가센터는 인건비와 수익성 계산의 묶음 단위입니다. 업무 관리는 하위 프로젝트 기준.</li>
+    <li>데이터는 이 브라우저에만 저장됩니다. <b>설정·백업</b>에서 주기적으로 JSON 내보내기.</li>
+  </ul></div></div>`;
+}
+
+/* ── 프로젝트 ── */
+let pf={cc:'',status:'',q:''};
+function vProj(){
+  const ccs=allCC();
+  let rows=DB.projects.filter(p=>
+    (!pf.cc||p.cc===pf.cc)&&(!pf.status||p.status===pf.status)&&
+    (!pf.q||[p.code,p.parent,p.sub,p.owner,p.goal].join(' ').toLowerCase().includes(pf.q.toLowerCase())));
+  return `<h1 class="page">프로젝트 원장</h1><p class="pagesub">업무 관리는 하위 프로젝트 기준 · 행을 누르면 상세/편집</p>
+  <div class="filters">
+    <select onchange="pf.cc=this.value;render()"><option value="">원가센터 전체</option>${ccs.map(c=>`<option ${pf.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+    <select onchange="pf.status=this.value;render()"><option value="">상태 전체</option>${(DB.settings['상태']||[]).map(s=>`<option ${pf.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
+    <input type="search" placeholder="검색 (코드·이름·Owner)" value="${esc(pf.q)}" oninput="pf.q=this.value;render()">
+    <span style="flex:1"></span><button class="btn" onclick="editProj(null)">+ 프로젝트</button>
+  </div>
+  <div class="card"><div class="tw"><table><thead><tr>
+  <th>코드</th><th>프로젝트</th><th>Owner</th><th>상태</th><th>단계</th><th>우선</th><th>마감</th><th>D-Day</th><th class="r">예상매출</th><th>계약</th><th>수익성</th></tr></thead><tbody>
+  ${rows.map(p=>{ const pr=projProf(p);
+    return `<tr class="click" onclick="editProj('${p.code}')">
+    <td class="num">${esc(p.code)}</td>
+    <td><b>${esc(pname(p))}</b>${p.goal?`<div class="hint">${esc(p.goal)}</div>`:''}</td>
+    <td>${esc(p.owner||'-')}</td><td>${statusBadge(p.status)}</td><td>${esc(p.stage||'-')}</td>
+    <td>${p.pri?`<span class="pri ${esc(p.pri)}">${esc(p.pri)}</span>`:'-'}</td>
+    <td class="num">${esc(p.due||'-')}</td><td>${ddayHtml(dday(p.due))}</td>
+    <td class="r num">${wonS(p.revenue)}</td><td class="mini">${esc(p.contract||'-')}</td>
+    <td>${pr?profBadge(pr.state):'<span class="hint">-</span>'}</td></tr>`; }).join('')}
+  </tbody></table></div></div>`;
+}
+function projForm(p){
+  const S=DB.settings;
+  return `<div class="fgrid">
+  <div class="f"><label>코드</label><input id="f_code" value="${esc(p.code)}" ${p._new?'':'readonly'}></div>
+  <div class="f"><label>원가센터</label><select id="f_cc">${opt(allCC(),p.cc)}</select></div>
+  <div class="f"><label>상위 프로젝트</label><input id="f_parent" value="${esc(p.parent)}"></div>
+  <div class="f"><label>하위 프로젝트</label><input id="f_sub" value="${esc(p.sub)}"></div>
+  <div class="f"><label>대분류</label><select id="f_cat">${opt(S['대분류']||[],p.cat)}</select></div>
+  <div class="f"><label>유형</label><select id="f_type">${opt(S['프로젝트 유형']||[],p.type)}</select></div>
+  <div class="f full"><label>목표 결과물</label><input id="f_goal" value="${esc(p.goal)}"></div>
+  <div class="f"><label>Owner</label><input id="f_owner" value="${esc(p.owner)}"></div>
+  <div class="f"><label>상태</label><select id="f_status">${opt(S['상태']||[],p.status)}</select></div>
+  <div class="f"><label>단계</label><select id="f_stage">${opt(S['단계']||[],p.stage)}</select></div>
+  <div class="f"><label>우선순위</label><select id="f_pri">${opt(['A','B','C','D'],p.pri)}</select></div>
+  <div class="f"><label>최종 마감</label><input id="f_due" type="date" value="${esc(p.due)}"></div>
+  <div class="f"><label>예상 매출 (원)</label><input id="f_rev" type="number" value="${p.revenue||''}"></div>
+  <div class="f"><label>계약 상태</label><select id="f_contract">${opt(S['계약 상태']||[],p.contract)}</select></div>
+  <div class="f full"><label>다음 달 마일스톤</label><input id="f_ms" value="${esc(p.milestone)}"></div>
+  <div class="f full"><label>이번 달 액션</label><textarea id="f_action">${esc(p.action)}</textarea></div>
+  <div class="f full"><label>결정 필요</label><textarea id="f_dec">${esc(p.decision)}</textarea></div>
+  <div class="f full"><label>리스크 / 막힌 점</label><textarea id="f_risk">${esc(p.risk)}</textarea></div>
+  <div class="f"><label>관련 링크</label><input id="f_link" value="${esc(p.link)}"></div>
+  <div class="f"><label>비고</label><input id="f_note" value="${esc(p.note)}"></div>
+  </div>`;
+}
+function editProj(code){
+  const isNew=!code;
+  const p = isNew ? {_new:true,code:'',cat:'',cc:'',parent:'',sub:'',type:'',goal:'',owner:'',status:'진행중',stage:'기획',pri:'B',due:'',milestone:'',action:'',decision:'',risk:'',revenue:0,contract:'',link:'',note:''} : projOf(code);
+  if(!p) return;
+  const pr = !isNew ? projProf(p) : null;
+  const rel = !isNew ? `
+   <div class="subsec"><h4>이번 주 액션 (${DB.weekly.filter(w=>w.code===code).length})</h4>
+   <ul class="mini">${DB.weekly.filter(w=>w.code===code).slice(-4).map(w=>`<li>${statusBadge(w.status)} ${nl(w.todo)||'<span class="hint">(내용 없음)</span>'}</li>`).join('')||'<li class="hint">없음</li>'}</ul>
+   <div style="display:flex;gap:6px;margin-top:8px">
+    <input id="qw_${esc(code)}" placeholder="이번 주 할 일 바로 적기…" style="flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#FAFBFA;font-size:13px">
+    <button class="btn ghost sm" onclick="quickWeek('${esc(code)}')">추가</button></div></div>
+   <div class="subsec"><h4>결정 로그</h4>
+   <ul class="mini">${DB.decisions.filter(d=>d.code===code).map(d=>`<li><b>${esc(d.status)}</b> · ${nl(d.issue)} ${d.decision?'→ '+nl(d.decision):''}</li>`).join('')||'<li class="hint">없음</li>'}</ul></div>
+   <div class="subsec"><h4>지출 (${won(DB.expenses.filter(e=>e.code===code).reduce((a,e)=>a+(+e.amount||0),0))||'₩0'})</h4>
+   <ul class="mini">${DB.expenses.filter(e=>e.code===code).map(e=>`<li>${esc(e.kind)} · ${esc(e.item)} <b class="num">${won(e.amount)}</b></li>`).join('')||'<li class="hint">없음</li>'}</ul></div>`:'';
+  openModal(`${isNew?'새 프로젝트':esc(pname(p))+(pr?` &nbsp;${profBadge(pr.state)}`:'')}`, projForm(p)+rel, ()=>{
+    const g=id=>document.getElementById(id).value.trim();
+    const nc=g('f_code'); if(!nc){ toast('코드를 입력하세요'); return false; }
+    if(isNew && projOf(nc)){ toast('이미 있는 코드입니다'); return false; }
+    const t = isNew ? {} : p;
+    Object.assign(t,{code:nc,cat:g('f_cat'),cc:g('f_cc'),parent:g('f_parent'),sub:g('f_sub'),type:g('f_type'),
+      goal:g('f_goal'),owner:g('f_owner'),status:g('f_status'),stage:g('f_stage'),pri:g('f_pri'),due:g('f_due'),
+      milestone:g('f_ms'),action:document.getElementById('f_action').value,decision:document.getElementById('f_dec').value,
+      risk:document.getElementById('f_risk').value,revenue:+g('f_rev')||0,contract:g('f_contract'),link:g('f_link'),note:g('f_note')});
+    if(isNew){ delete t._new; DB.projects.push(t);
+      DB.finance.push({code:nc,client:'',total:0,contract:'',adv:0,mid:0,bal:0,tax:'',expDate:'',note:''}); }
+    save(); render(); return true;
+  }, isNew?null:()=>{ if(!confirm('삭제 대신 상태를 "중단/취소"로 남기는 걸 권장합니다.\n정말 삭제할까요?')) return;
+      DB.projects=DB.projects.filter(x=>x.code!==code); save(); render(); closeModal(); });
+}
+
+/* ── 주간액션 ── */
+let wf={owner:'',open:true,mode:'board',planWeek:''};
+function vWeek(){
+  if(wf.mode==='plan') return vPlan();
+  const owners=[...new Set(DB.weekly.map(w=>projOf(w.code)?.owner).filter(Boolean))];
+  let rows=DB.weekly.filter(w=>{
+    const o=projOf(w.code)?.owner||'';
+    return (!wf.owner||o===wf.owner)&&(!wf.open||w.status!=='완료'); });
+  const byWeek={};
+  rows.forEach(w=>{ (byWeek[w.week||'주차 미지정']=byWeek[w.week||'주차 미지정']||[]).push(w); });
+  const weeks=Object.keys(byWeek).sort().reverse();
+  return `<h1 class="page">주간 실행 보드</h1><p class="pagesub">체크하면 완료 처리 · 행을 누르면 편집</p>
+  <div class="filters">
+    <div class="seg"><button class="on">보드</button><button onclick="wf.mode='plan';render()">📝 주간 계획</button></div>
+    <select onchange="wf.owner=this.value;render()"><option value="">Owner 전체</option>${owners.map(o=>`<option ${wf.owner===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
+    <div class="seg"><button class="${wf.open?'on':''}" onclick="wf.open=true;render()">미완료</button><button class="${!wf.open?'on':''}" onclick="wf.open=false;render()">전체</button></div>
+    <span style="flex:1"></span><button class="btn" onclick="editWeek(null)">+ 액션</button>
+  </div>
+  ${weeks.map(wk=>`<div class="card"><div class="hd"><h2>${esc(wk)} 주</h2><span class="hint">${byWeek[wk].length}건</span></div>
+  <div class="tw"><table><thead><tr><th></th><th>프로젝트</th><th>Owner</th><th>이번 주 할 일</th><th>마감</th><th>상태</th><th>막힌 점 / 다음 액션</th></tr></thead><tbody>
+  ${byWeek[wk].map(w=>{ const p=projOf(w.code);
+    return `<tr class="click" onclick="editWeek('${w.id}')">
+    <td onclick="event.stopPropagation()"><input type="checkbox" ${w.status==='완료'?'checked':''} onchange="toggleWeek('${w.id}',this.checked)"></td>
+    <td><b>${esc(p?pname(p):w.code)}</b></td><td>${esc(p?.owner||'-')}</td>
+    <td class="mini">${nl(w.todo)||'<span class="hint">-</span>'}</td>
+    <td class="num">${esc(w.due||'-')} ${w.due?ddayHtml(dday(w.due)):''}</td>
+    <td>${statusBadge(w.status)}</td>
+    <td class="mini">${[w.blocked&&('⛔ '+w.blocked),w.next&&('→ '+w.next)].filter(Boolean).map(nl).join('<br>')||'<span class="hint">-</span>'}</td></tr>`; }).join('')}
+  </tbody></table></div></div>`).join('') || '<div class="card"><div class="empty">표시할 액션이 없습니다.</div></div>'}`;
+}
+
+/* 주간 계획 모드: 프로젝트를 훑으며 옆에 바로 적는다 */
+function vPlan(){
+  const week = wf.planWeek || mondayOf(new Date());
+  wf.planWeek = week;
+  const prevWeeks = [...new Set(DB.weekly.map(w=>w.week).filter(w=>w&&w<week))].sort().reverse();
+  const prevWeek = prevWeeks[0]||'';
+  let projs = DB.projects.filter(p=>!['완료','취소','중단'].includes(p.status));
+  if(wf.owner) projs = projs.filter(p=>p.owner===wf.owner);
+  // 정렬: 위험 → D-Day 임박 → 우선순위
+  projs = [...projs].sort((a,b)=>{
+    const ra=(a.status==='위험'?0:1)-(b.status==='위험'?0:1); if(ra) return ra;
+    const da=dday(a.due), db_=dday(b.due);
+    const dv=(da===null?9999:da)-(db_===null?9999:db_); if(dv) return dv;
+    return (a.pri||'Z').localeCompare(b.pri||'Z'); });
+  const entryOf = code => DB.weekly.find(w=>w.week===week && w.code===code);
+  const carry = DB.weekly.filter(w=>w.week===prevWeek && w.status!=='완료' && w.todo && w.code);
+  const owners=[...new Set(DB.projects.map(p=>p.owner).filter(o=>o&&o!=='-'))];
+  const doneN = projs.filter(p=>{ const e=entryOf(p.code); return e&&e.todo.trim(); }).length;
+  return `<h1 class="page">주간 계획 · ${esc(week)} 주</h1>
+  <p class="pagesub">프로젝트를 위에서부터 훑으면서, 이번 주 할 일을 오른쪽에 바로 적으세요. 칸을 벗어나면 자동 저장됩니다.</p>
+  <div class="filters">
+    <div class="seg"><button onclick="wf.mode='board';render()">보드</button><button class="on">📝 주간 계획</button></div>
+    <input type="date" value="${esc(week)}" onchange="wf.planWeek=mondayOf(new Date(this.value));render()" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">
+    <select onchange="wf.owner=this.value;render()"><option value="">Owner 전체</option>${owners.map(o=>`<option ${wf.owner===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
+    <span style="flex:1"></span><span class="chip"><b class="num">${doneN}</b>/ ${projs.length} 작성</span>
+  </div>
+  ${carry.length?`<div class="card"><div class="hd"><h2>지난주(${esc(prevWeek)}) 미완료 — 이어서 하기</h2></div>
+  <div class="tw"><table><tbody>${carry.map(w=>{ const p=projOf(w.code); const already=entryOf(w.code);
+    return `<tr><td style="width:180px"><b>${esc(p?pname(p):w.code)}</b></td><td class="mini">${nl(w.todo)}</td>
+    <td style="width:110px;text-align:right">${already&&already.todo.trim()?'<span class="hint">작성됨</span>':`<button class="btn ghost sm" onclick="carryOver('${w.id}')">이번 주로 →</button>`}</td></tr>`; }).join('')}
+  </tbody></table></div></div>`:''}
+  <div class="card"><div class="tw"><table><thead><tr>
+  <th style="min-width:170px">프로젝트</th><th>지금 상황 (읽기용)</th><th style="min-width:260px;width:38%">이번 주 할 일 ✍</th></tr></thead><tbody>
+  ${projs.map(p=>{ const e=entryOf(p.code); const prev=DB.weekly.find(w=>w.week===prevWeek&&w.code===p.code);
+    const ctx=[
+      p.stage&&('단계 '+p.stage), p.due&&('마감 '+p.due),
+      p.milestone&&('◇ '+p.milestone), p.action&&('이번 달: '+p.action),
+      p.decision&&('결정필요: '+p.decision), p.risk&&('⛔ '+p.risk),
+      prev&&prev.todo&&('지난주: '+prev.todo+(prev.status==='완료'?' ✓':' (미완)'))
+    ].filter(Boolean);
+    return `<tr>
+    <td><b>${esc(pname(p))}</b><div class="hint">${esc(p.owner||'-')} · ${statusBadge(p.status)} ${p.due?ddayHtml(dday(p.due)):''}</div></td>
+    <td class="mini" style="color:var(--sub)">${ctx.map(nl).join('<br>')||'<span class="hint">-</span>'}</td>
+    <td><textarea data-plancode="${esc(p.code)}" placeholder="이번 주에 할 일…"
+      style="width:100%;min-height:56px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:${e&&e.todo.trim()?'#FAFBFA':'#FFFDF5'};font-size:13px;resize:vertical"
+      onblur="planSave('${esc(p.code)}',this)">${esc(e?e.todo:'')}</textarea>
+      ${e&&e.due?`<div class="hint num" style="margin-top:2px">마감 ${esc(e.due)}</div>`:''}</td></tr>`; }).join('')}
+  </tbody></table></div></div>
+  <p class="hint">저장 규칙: 내용을 적으면 해당 주차 액션이 생기고, 비우면 삭제됩니다. 마감·막힌 점 등 세부는 보드에서 행을 눌러 편집.</p>`;
+}
+function planSave(code, ta){
+  const week=wf.planWeek||mondayOf(new Date());
+  const val=ta.value.trim();
+  let e=DB.weekly.find(w=>w.week===week&&w.code===code);
+  if(val){
+    if(e){ if(e.todo===val) return; e.todo=val; }
+    else { e={id:uid('w'),week,code,todo:val,due:'',status:'예정',blocked:'',doneAt:'',next:''}; DB.weekly.push(e); }
+    ta.style.background='#FAFBFA'; save(); toast('저장됨 · '+pnameByCode(code));
+  } else if(e && !val){
+    DB.weekly=DB.weekly.filter(w=>w!==e); ta.style.background='#FFFDF5'; save(); toast('비워서 삭제됨');
+  }
+}
+function carryOver(prevId){
+  const prev=DB.weekly.find(w=>w.id===prevId); if(!prev) return;
+  const week=wf.planWeek||mondayOf(new Date());
+  let e=DB.weekly.find(w=>w.week===week&&w.code===prev.code);
+  if(e){ e.todo=(e.todo?e.todo+'\n':'')+prev.todo; }
+  else DB.weekly.push({id:uid('w'),week,code:prev.code,todo:prev.todo,due:prev.due,status:'예정',blocked:prev.blocked,doneAt:'',next:''});
+  save(); render(); toast('이번 주로 가져왔습니다');
+}
+function quickWeek(code){
+  const el=document.getElementById('qw_'+code); if(!el) return;
+  const val=el.value.trim(); if(!val){ toast('내용을 입력하세요'); return; }
+  const week=mondayOf(new Date());
+  let e=DB.weekly.find(w=>w.week===week&&w.code===code);
+  if(e) e.todo=(e.todo?e.todo+'\n':'')+val;
+  else DB.weekly.push({id:uid('w'),week,code,todo:val,due:'',status:'예정',blocked:'',doneAt:'',next:''});
+  el.value=''; save(); toast('이번 주 액션에 추가됨');
+}
+function toggleWeek(id,done){ const w=DB.weekly.find(x=>x.id===id); if(!w) return;
+  w.status=done?'완료':'진행중'; w.doneAt=done?new Date().toISOString().slice(0,10):''; save(); render(); }
+function editWeek(id){
+  const isNew=!id;
+  const w=isNew?{id:uid('w'),week:mondayOf(new Date()),code:'',todo:'',due:'',status:'예정',blocked:'',doneAt:'',next:''}:DB.weekly.find(x=>x.id===id);
+  openModal(isNew?'새 주간 액션':'주간 액션 편집', `<div class="fgrid">
+  <div class="f"><label>주차 (월요일)</label><input id="f_week" type="date" value="${esc(w.week)}"></div>
+  <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),w.code)}</select></div>
+  <div class="f full"><label>이번 주 할 일</label><textarea id="f_todo">${esc(w.todo)}</textarea></div>
+  <div class="f"><label>마감</label><input id="f_due" type="date" value="${esc(w.due)}"></div>
+  <div class="f"><label>상태</label><select id="f_st">${opt(DB.settings['액션 상태']||['예정','진행중','완료','지연'],w.status)}</select></div>
+  <div class="f full"><label>막힌 점</label><input id="f_bl" value="${esc(w.blocked)}"></div>
+  <div class="f full"><label>다음 액션</label><input id="f_next" value="${esc(w.next)}"></div>
+  </div>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    Object.assign(w,{week:g('f_week'),code:g('f_code'),todo:g('f_todo'),due:g('f_due'),status:g('f_st'),blocked:g('f_bl'),next:g('f_next')});
+    if(isNew) DB.weekly.push(w); save(); render(); return true;
+  }, isNew?null:()=>{ DB.weekly=DB.weekly.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+function mondayOf(d){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); return x.toISOString().slice(0,10); }
+
+/* ── 결정로그 ── */
+let df={status:''};
+function vDec(){
+  let rows=DB.decisions.filter(d=>!df.status||d.status===df.status);
+  return `<h1 class="page">결정 기록</h1><p class="pagesub">중단·취소 사유와 중요한 선택지를 남기는 곳 · 삭제 대신 기록</p>
+  <div class="filters">
+    <select onchange="df.status=this.value;render()"><option value="">상태 전체</option>${(DB.settings['결정 상태']||[]).map(s=>`<option ${df.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
+    <span style="flex:1"></span><button class="btn" onclick="editDec(null)">+ 결정 기록</button></div>
+  <div class="card"><div class="tw"><table><thead><tr><th>날짜</th><th>프로젝트</th><th>이슈</th><th>결정 필요자</th><th>결정 내용 / 후속</th><th>마감</th><th>상태</th></tr></thead><tbody>
+  ${rows.map(d=>`<tr class="click" onclick="editDec('${d.id}')">
+    <td class="num">${esc(d.date||'-')}</td><td><b>${esc(pnameByCode(d.code))}</b></td>
+    <td class="mini">${nl(d.issue)}</td><td>${esc(d.decider||'-')}</td>
+    <td class="mini">${[d.decision,d.followup&&('→ '+d.followup)].filter(Boolean).map(nl).join('<br>')||'<span class="hint">-</span>'}</td>
+    <td class="num">${esc(d.due||'-')}</td>
+    <td><span class="b ${d.status==='결정완료'?'g':d.status==='보류'||d.status==='취소'?'gy':'a'}">${esc(d.status)}</span></td></tr>`).join('')
+    || '<tr><td colspan="7" class="empty">기록이 없습니다.</td></tr>'}
+  </tbody></table></div></div>`;
+}
+function editDec(id){
+  const isNew=!id;
+  const d=isNew?{id:uid('d'),date:new Date().toISOString().slice(0,10),code:'',issue:'',decider:'',options:'',decision:'',followup:'',due:'',status:'결정대기'}:DB.decisions.find(x=>x.id===id);
+  openModal(isNew?'새 결정 기록':'결정 기록 편집', `<div class="fgrid">
+  <div class="f"><label>날짜</label><input id="f_date" type="date" value="${esc(d.date)}"></div>
+  <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),d.code)}</select></div>
+  <div class="f full"><label>이슈</label><textarea id="f_issue">${esc(d.issue)}</textarea></div>
+  <div class="f"><label>결정 필요자</label><input id="f_dcd" value="${esc(d.decider)}"></div>
+  <div class="f"><label>상태</label><select id="f_st">${opt(DB.settings['결정 상태']||[],d.status)}</select></div>
+  <div class="f full"><label>선택지</label><textarea id="f_opt">${esc(d.options)}</textarea></div>
+  <div class="f full"><label>결정 내용</label><textarea id="f_dec">${esc(d.decision)}</textarea></div>
+  <div class="f full"><label>후속 액션</label><input id="f_fu" value="${esc(d.followup)}"></div>
+  <div class="f"><label>마감</label><input id="f_due" type="date" value="${esc(d.due)}"></div>
+  </div>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    Object.assign(d,{date:g('f_date'),code:g('f_code'),issue:g('f_issue'),decider:g('f_dcd'),status:g('f_st'),
+      options:g('f_opt'),decision:g('f_dec'),followup:g('f_fu'),due:g('f_due')});
+    if(isNew) DB.decisions.push(d); save(); render(); return true;
+  }, isNew?null:()=>{ DB.decisions=DB.decisions.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+
+/* ── 재무 ── */
+function vFin(){
+  const rows=DB.finance.filter(f=>projOf(f.code));
+  const tt=rows.reduce((a,f)=>{ const c=finCalc(f); a.total+=(+f.total||0); a.paid+=c.paid; a.due+=c.due; return a; },{total:0,paid:0,due:0});
+  return `<h1 class="page">계약 / 입금 관리</h1><p class="pagesub">계약·입금은 하위 프로젝트 기준 · 입금합계와 미수금은 자동 계산</p>
+  <div class="kpi">
+    <div class="k"><div class="l">총 계약금</div><div class="v num">${wonS(tt.total)}</div></div>
+    <div class="k gr"><div class="l">입금 합계</div><div class="v num">${wonS(tt.paid)}</div></div>
+    <div class="k ${tt.due>0?'rd':''}"><div class="l">미수금</div><div class="v num">${wonS(tt.due)}</div></div>
+  </div>
+  <div class="card"><div class="tw"><table><thead><tr><th>프로젝트</th><th>클라이언트</th><th class="r">총 계약금</th><th>계약 상태</th>
+  <th class="r">선금</th><th class="r">중도금</th><th class="r">잔금</th><th class="r">입금합계</th><th class="r">미수금</th><th>세금계산서</th><th>입금 예정</th></tr></thead><tbody>
+  ${rows.map(f=>{ const c=finCalc(f);
+    return `<tr class="click" onclick="editFin('${f.code}')">
+    <td><b>${esc(pnameByCode(f.code))}</b><div class="hint">${esc(f.code)}</div></td>
+    <td>${esc(f.client||'-')}</td><td class="r num">${wonS(f.total)}</td><td class="mini">${esc(f.contract||'-')}</td>
+    <td class="r num">${wonS(f.adv)}</td><td class="r num">${wonS(f.mid)}</td><td class="r num">${wonS(f.bal)}</td>
+    <td class="r num"><b>${wonS(c.paid)}</b></td>
+    <td class="r num" style="${c.due>0?'color:var(--danger);font-weight:800':''}">${wonS(c.due)}</td>
+    <td class="mini">${esc(f.tax||'-')}</td><td class="num">${esc(f.expDate||'-')}</td></tr>`; }).join('')}
+  </tbody><tfoot><tr><td colspan="2">합계</td><td class="r num">${wonS(tt.total)}</td><td></td><td colspan="3"></td>
+  <td class="r num">${wonS(tt.paid)}</td><td class="r num">${wonS(tt.due)}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
+}
+function editFin(code){
+  let f=DB.finance.find(x=>x.code===code);
+  if(!f){ f={code,client:'',total:0,contract:'',adv:0,mid:0,bal:0,tax:'',expDate:'',note:''}; DB.finance.push(f); }
+  openModal('계약/입금 · '+esc(pnameByCode(code)), `<div class="fgrid">
+  <div class="f"><label>클라이언트/파트너</label><input id="f_cl" value="${esc(f.client)}"></div>
+  <div class="f"><label>계약 상태</label><select id="f_ct">${opt(DB.settings['계약 상태']||[],f.contract)}</select></div>
+  <div class="f"><label>총 계약금 (원)</label><input id="f_tt" type="number" value="${f.total||''}"></div>
+  <div class="f"><label>세금계산서</label><input id="f_tax" value="${esc(f.tax)}"></div>
+  <div class="f"><label>선금</label><input id="f_adv" type="number" value="${f.adv||''}"></div>
+  <div class="f"><label>중도금</label><input id="f_mid" type="number" value="${f.mid||''}"></div>
+  <div class="f"><label>잔금</label><input id="f_bal" type="number" value="${f.bal||''}"></div>
+  <div class="f"><label>입금 예정일</label><input id="f_ed" type="date" value="${esc(f.expDate)}"></div>
+  <div class="f full"><label>비고</label><input id="f_nt" value="${esc(f.note)}"></div>
+  </div><p class="hint" style="margin-top:10px">입금합계·미수금은 자동 계산됩니다.</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    Object.assign(f,{client:g('f_cl'),contract:g('f_ct'),total:+g('f_tt')||0,tax:g('f_tax'),
+      adv:+g('f_adv')||0,mid:+g('f_mid')||0,bal:+g('f_bal')||0,expDate:g('f_ed'),note:g('f_nt')});
+    save(); render(); return true; });
+}
+
+/* ── 인력분배 ── */
+let pplTab='alloc';
+function vPpl(){
+  const ccs=DB.ccList.slice(0,13); // 매트릭스 컬럼(원장과 동일)
+  const stats=DB.people.map(p=>({p, c:personCalc(p)}));
+  const over=stats.filter(s=>s.c.state==='과부하').length, free=stats.filter(s=>s.c.state==='여유').length;
+  const avg=stats.length?stats.reduce((a,s)=>a+s.c.total,0)/stats.length:0;
+  const ccSum=cc=>DB.people.reduce((a,p)=>a+(p.alloc[cc]||0),0);
+  return `<h1 class="page">인력분배</h1><p class="pagesub">원가센터 기준 투입률 · 100% = 1.0 · 셀을 바로 수정할 수 있습니다</p>
+  <div class="kpi">
+   <div class="k"><div class="l">총 인원</div><div class="v num">${DB.people.length}</div></div>
+   <div class="k ${over?'rd':''}"><div class="l">과부하</div><div class="v num">${over}</div></div>
+   <div class="k ${free?'am':''}"><div class="l">여유</div><div class="v num">${free}</div></div>
+   <div class="k"><div class="l">평균 할당률</div><div class="v num">${pct(avg)}</div></div>
+  </div>
+  <div class="filters"><div class="seg">
+   <button class="${pplTab==='alloc'?'on':''}" onclick="pplTab='alloc';render()">할당률 매트릭스</button>
+   <button class="${pplTab==='roles'?'on':''}" onclick="pplTab='roles';render()">담당 업무</button>
+   <button class="${pplTab==='rates'?'on':''}" onclick="pplTab='rates';render()">인건비 단가</button>
+  </div></div>
+  ${pplTab==='alloc'?`<div class="card"><div class="tw"><table class="mtx"><thead><tr><th class="name">이름</th>
+   ${ccs.map(c=>`<th class="r">${esc(c).replace(' ','<br>')}</th>`).join('')}<th class="r">총할당</th><th class="r">잔여</th><th>상태</th></tr></thead><tbody>
+   ${DB.people.map((p,pi)=>{ const c=personCalc(p);
+     return `<tr><td class="name">${esc(p.name)}<div class="hint">${esc(p.team||'')}</div></td>
+     ${ccs.map(cc=>`<td class="r"><input class="num" type="number" step="0.05" min="0" value="${p.alloc[cc]||0}"
+       onchange="setAlloc(${pi},'${esc(cc)}',this.value)"></td>`).join('')}
+     <td class="r num"><b>${c.total.toFixed(2)}</b></td><td class="r num">${c.rest.toFixed(2)}</td>
+     <td><span class="b ${c.state==='과부하'?'rd':c.state==='여유'?'a':'g'}">${c.state}</span></td></tr>`; }).join('')}
+   </tbody><tfoot><tr><td class="name">총 투입률</td>${ccs.map(cc=>`<td class="r num">${ccSum(cc).toFixed(2)}</td>`).join('')}
+   <td class="r num">${stats.reduce((a,s)=>a+s.c.total,0).toFixed(1)}</td><td colspan="2"></td></tr>
+   <tr><td class="name">투입 인원</td>${ccs.map(cc=>`<td class="r num">${DB.people.filter(p=>(p.alloc[cc]||0)>0).length}</td>`).join('')}<td colspan="3"></td></tr></tfoot>
+   </table></div></div>`
+  :pplTab==='roles'?`<div class="card"><div class="tw"><table><thead><tr><th>이름</th><th>팀</th><th>담당 프로젝트 · 업무</th></tr></thead><tbody>
+   ${DB.people.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="mini">${esc(p.team||'')}</td>
+   <td class="mini">${Object.entries(p.roles).map(([cc,r])=>`<b>${esc(cc)}</b> ${nl(r)}`).join(' · ')||'<span class="hint">-</span>'}</td></tr>`).join('')}
+   </tbody></table></div></div>`
+  :`<div class="card"><div class="hd"><h2>인건비 단가</h2><span class="hint">월 인건비 원가 · 수익성 계산의 내부인건비에 반영</span></div>
+   <div class="tw"><table><thead><tr><th>이름</th><th>기본 역할</th><th class="r">월 인건비 원가</th><th>적용</th><th>비고</th></tr></thead><tbody>
+   ${DB.rates.map((r,i)=>`<tr><td><b>${esc(r.name)}</b></td><td class="mini">${esc(r.role||'')}</td>
+   <td class="r"><input class="num" type="number" style="width:110px;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:6px" value="${r.monthly||0}" onchange="DB.rates[${i}].monthly=+this.value||0;save();render()"></td>
+   <td><select onchange="DB.rates[${i}].apply=this.value;save();render()" style="padding:4px;border:1px solid var(--line);border-radius:6px"><option ${r.apply!=='미적용'?'selected':''}>적용</option><option ${r.apply==='미적용'?'selected':''}>미적용</option></select></td>
+   <td class="mini">${r.monthly?'':'<span class="b a">단가 입력 필요</span>'} ${esc(r.note||'')}</td></tr>`).join('')}
+   </tbody></table></div></div>`}`;
+}
+function setAlloc(pi,cc,v){ DB.people[pi].alloc[cc]=+v||0; save(); render(); }
+
+/* ── 지출 ── */
+let ef={cc:''};
+function vExp(){
+  const rows=DB.expenses.filter(e=>{ const p=projOf(e.code); return !ef.cc||(p&&p.cc===ef.cc); });
+  const total=rows.reduce((a,e)=>a+(+e.amount||0),0);
+  const byCC={}; DB.expenses.forEach(e=>{ const p=projOf(e.code); const cc=p?p.cc:'(미연결)'; byCC[cc]=(byCC[cc]||0)+(+e.amount||0); });
+  return `<h1 class="page">실제 지출 상세</h1><p class="pagesub">하위 프로젝트 코드로 입력해도 원가센터로 자동 합산됩니다</p>
+  <div class="filters">
+    <select onchange="ef.cc=this.value;render()"><option value="">원가센터 전체</option>${allCC().map(c=>`<option ${ef.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+    <span style="flex:1"></span><button class="btn" onclick="editExp(null)">+ 지출</button></div>
+  <div class="card"><div class="hd"><h2>원가센터별 합계</h2></div><div class="bd" style="display:flex;gap:8px;flex-wrap:wrap">
+   ${Object.entries(byCC).sort((a,b)=>b[1]-a[1]).map(([cc,v])=>`<div class="chip"><b class="num">${wonS(v)}</b>${esc(cc)}</div>`).join('')||'<span class="hint">지출이 없습니다.</span>'}
+  </div></div>
+  <div class="card"><div class="tw"><table><thead><tr><th>날짜</th><th>프로젝트</th><th>구분</th><th>세부항목</th><th>거래처</th><th class="r">금액</th><th>결제</th><th>원가센터</th></tr></thead><tbody>
+  ${rows.map(e=>{ const p=projOf(e.code);
+   return `<tr class="click" onclick="editExp('${e.id}')">
+   <td class="num">${esc(e.date||'-')}</td><td><b>${esc(p?pname(p):e.code)}</b></td>
+   <td class="mini">${esc(e.kind||'-')}</td><td class="mini">${esc(e.item||'-')}</td><td class="mini">${esc(e.vendor||'-')}</td>
+   <td class="r num"><b>${won(e.amount)||'-'}</b></td><td class="mini">${esc(e.payState||'-')}</td>
+   <td class="mini">${esc(p?p.cc:'(미연결)')}</td></tr>`; }).join('') || '<tr><td colspan="8" class="empty">지출 내역이 없습니다.</td></tr>'}
+  </tbody><tfoot><tr><td colspan="5">합계</td><td class="r num">${won(total)||'₩0'}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
+}
+function editExp(id){
+  const isNew=!id;
+  const e=isNew?{id:uid('e'),date:new Date().toISOString().slice(0,10),code:'',kind:'',item:'',vendor:'',amount:0,payState:'',evidence:'',memo:''}:DB.expenses.find(x=>x.id===id);
+  openModal(isNew?'새 지출':'지출 편집', `<div class="fgrid">
+  <div class="f"><label>날짜</label><input id="f_date" type="date" value="${esc(e.date)}"></div>
+  <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),e.code)}</select></div>
+  <div class="f"><label>지출구분</label><select id="f_kind">${opt(DB.settings['지출구분']||[],e.kind)}</select></div>
+  <div class="f"><label>금액 (원)</label><input id="f_amt" type="number" value="${e.amount||''}"></div>
+  <div class="f"><label>세부항목</label><input id="f_item" value="${esc(e.item)}"></div>
+  <div class="f"><label>거래처</label><input id="f_ven" value="${esc(e.vendor)}"></div>
+  <div class="f"><label>결제상태</label><select id="f_pay">${opt([...new Set([...(DB.settings['결제상태']||[]), e.payState].filter(Boolean))],e.payState)}</select></div>
+  <div class="f"><label>증빙/링크</label><input id="f_ev" value="${esc(e.evidence)}"></div>
+  <div class="f full"><label>메모</label><input id="f_memo" value="${esc(e.memo)}"></div>
+  </div>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    Object.assign(e,{date:g('f_date'),code:g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
+      vendor:g('f_ven'),payState:g('f_pay'),evidence:g('f_ev'),memo:g('f_memo')});
+    if(isNew) DB.expenses.push(e); save(); render(); return true;
+  }, isNew?null:()=>{ DB.expenses=DB.expenses.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+
+/* ── 수익성 ── */
+function vProf(){
+  const rows=allCC().map(ccCalc).filter(c=>c.count>0||c.labor>0||c.extBudget>0);
+  const tt=rows.reduce((a,c)=>{ a.rev+=c.revenue; a.bud+=c.totalBudget; a.margin+=c.estMargin; a.ext+=c.actExt; return a; },{rev:0,bud:0,margin:0,ext:0});
+  const nProb=rows.filter(c=>['주의','저마진','적자'].includes(c.state)).length;
+  return `<h1 class="page">수익성 계산실 · 원가센터 기준</h1>
+  <p class="pagesub">인건비 = Σ(투입률 × 월 단가) × 투입개월 · 예비비 = 외부지출예산 × 예비비율 · 행을 누르면 입력값 편집</p>
+  <div class="kpi">
+   <div class="k"><div class="l">예상매출 합계</div><div class="v num">${wonS(tt.rev)}</div></div>
+   <div class="k"><div class="l">총지출예산</div><div class="v num">${wonS(tt.bud)}</div></div>
+   <div class="k gr"><div class="l">예상 실질마진</div><div class="v num">${wonS(tt.margin)}</div></div>
+   <div class="k"><div class="l">예상 마진율</div><div class="v num">${tt.rev>0?pct(tt.margin/tt.rev):'-'}</div></div>
+   <div class="k ${nProb?'am':''}"><div class="l">주의·저마진·적자</div><div class="v num">${nProb}</div></div>
+  </div>
+  <div class="card"><div class="tw"><table><thead><tr><th>원가센터</th><th class="r">P수</th><th class="r">예상매출</th><th class="r">개월</th>
+  <th class="r">외부지출예산</th><th class="r">예비비</th><th class="r">내부인건비</th><th class="r">총지출예산</th>
+  <th class="r">예상 실질마진</th><th class="r">마진율</th><th class="r">확정 지출</th><th class="r">전망마진율</th><th class="r">확정마진율</th><th>상태</th><th>전략목적</th></tr></thead><tbody>
+  ${rows.map(c=>`<tr class="click" onclick="editProf('${esc(c.cc)}')">
+   <td><b>${esc(c.cc)}</b>${c.pi.memo?`<div class="hint">${esc(c.pi.memo)}</div>`:''}</td>
+   <td class="r num">${c.count}</td><td class="r num">${wonS(c.revenue)}</td><td class="r num">${c.pi.months}</td>
+   <td class="r num">${wonS(c.extBudget)}${budgetsOf(c.cc).length?'':' <span class="hint">직접입력</span>'}</td><td class="r num">${wonS(c.reserve)}</td>
+   <td class="r num">${wonS(c.labor)}</td><td class="r num"><b>${wonS(c.totalBudget)}</b></td>
+   <td class="r num" style="${c.estMargin<0?'color:var(--danger)':''}">${wonS(c.estMargin)}</td>
+   <td class="r num"><b>${c.revenue>0?pct(c.estRate):'-'}</b></td>
+   <td class="r num">${wonS(c.committed)}${c.overLines?` <span class="b rd">초과 ${c.overLines}</span>`:''}</td>
+   <td class="r num">${c.revenue>0?pct(c.fcRate):'-'}</td><td class="r num">${c.revenue>0?pct(c.actRate):'-'}</td>
+   <td>${profBadge(c.state)}</td><td class="mini">${esc(c.pi.purpose||'-')}</td></tr>`).join('')}
+  </tbody></table></div></div>
+  <p class="hint">계획마진 = 매출−(예산+예비비+인건비) · 전망마진 = 매출−인건비−(라인별 max(예산,확정)) · 확정마진 = 매출−인건비−확정지출<br>
+  외부지출예산은 <b>예산·집행</b> 탭의 예산 라인 합계가 자동 연결됩니다 (라인이 없으면 이 화면의 직접입력값 사용).<br>
+  상태 기준: 매출 0 → 매출미입력 · 마진율 &lt;0 → 적자 · &lt;${pct(DB.thresholds.low)} → 저마진 · &lt;${pct(DB.thresholds.warn)} → 주의 (설정에서 변경)</p>`;
+}
+function editProf(cc){
+  const pi=profitInput(cc);
+  openModal('수익성 입력 · '+esc(cc), `<div class="fgrid">
+  <div class="f"><label>투입개월</label><input id="f_m" type="number" step="0.5" value="${pi.months}"></div>
+  <div class="f"><label>외부지출예산 (원)</label>${budgetsOf(cc).length
+    ?`<input id="f_x" type="number" value="${ccExtBudget(cc)}" disabled title="예산·집행 탭의 라인 합계"><span class="hint">예산·집행 탭 라인 합계 (자동)</span>`
+    :`<input id="f_x" type="number" value="${pi.extBudget||''}">`}</div>
+  <div class="f"><label>예비비율 (예: 0.15)</label><input id="f_r" type="number" step="0.01" value="${pi.reserveRate}"></div>
+  <div class="f"><label>전략목적</label><select id="f_p">${opt(DB.settings['전략목적']||[],pi.purpose)}</select></div>
+  <div class="f full"><label>메모</label><input id="f_memo" value="${esc(pi.memo)}"></div>
+  </div><p class="hint" style="margin-top:10px">예상매출·인건비·실제지출은 각 탭 데이터에서 자동 연결됩니다.</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    const ext = budgetsOf(cc).length ? pi.extBudget : (+g('f_x')||0);
+    Object.assign(pi,{months:+g('f_m')||1,extBudget:ext,reserveRate:+g('f_r')||0,purpose:g('f_p'),memo:g('f_memo')});
+    save(); render(); return true; });
+}
+
+/* ── 예산·집행 ── */
+let bf={cc:''};
+function execBar(rate, over){
+  const w=Math.min(100,Math.round(rate*100));
+  return `<div style="display:flex;align-items:center;gap:6px;min-width:110px">
+   <div style="flex:1;height:6px;border-radius:3px;background:var(--gray-bg);overflow:hidden">
+    <div style="width:${w}%;height:100%;background:${over?'var(--danger)':(rate>0.85?'var(--amber)':'var(--ok)')}"></div></div>
+   <span class="num" style="font-size:11.5px;font-weight:800;${over?'color:var(--danger)':''}">${Math.round(rate*100)}%</span></div>`;
+}
+function vBud(){
+  const ccs = allCC().map(ccCalc).filter(c=>c.lines.length || c.count>0);
+  const shown = bf.cc ? ccs.filter(c=>c.cc===bf.cc) : ccs.filter(c=>c.lines.length);
+  const tt = ccs.reduce((a,c)=>{ c.lines.forEach(l=>{ a.bud+=l.budget; a.com+=l.committed; a.paid+=l.paid; }); return a; },{bud:0,com:0,paid:0});
+  const overN = ccs.reduce((a,c)=>a+c.overLines,0);
+  return `<h1 class="page">예산 · 집행</h1>
+  <p class="pagesub">예산은 원가센터 × 지출구분 라인으로 잡습니다 · 확정액 = 지출 탭에 입력된 전체(미지급 포함), 지급액 = 결제상태 '지급완료'분</p>
+  <div class="kpi">
+   <div class="k"><div class="l">총 예산</div><div class="v num">${wonS(tt.bud)}</div></div>
+   <div class="k"><div class="l">확정액</div><div class="v num">${wonS(tt.com)}</div></div>
+   <div class="k gr"><div class="l">지급액</div><div class="v num">${wonS(tt.paid)}</div></div>
+   <div class="k"><div class="l">잔여 예산</div><div class="v num">${wonS(tt.bud-tt.com)}</div></div>
+   <div class="k ${overN?'rd':''}"><div class="l">예산초과 라인</div><div class="v num">${overN}</div></div>
+  </div>
+  <div class="filters">
+   <select onchange="bf.cc=this.value;render()"><option value="">예산 있는 원가센터만</option>${allCC().map(c=>`<option ${bf.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+   <span style="flex:1"></span><button class="btn" onclick="editBud(null)">+ 예산 라인</button>
+  </div>
+  ${shown.map(c=>{
+    const bud=c.lines.reduce((a,l)=>a+l.budget,0), com=c.lines.reduce((a,l)=>a+l.committed,0), paid=c.lines.reduce((a,l)=>a+l.paid,0);
+    return `<div class="card"><div class="hd"><h2>${esc(c.cc)}</h2>
+    <span class="hint">매출 ${wonS(c.revenue)} · 인건비 ${wonS(c.labor)}</span><span class="sp"></span>
+    ${profBadge(c.state)}
+    <button class="btn ghost sm" onclick="editBud(null,'${esc(c.cc)}')">+ 라인</button></div>
+    <div class="tw"><table><thead><tr><th>지출구분</th><th class="r">예산</th><th class="r">확정액</th><th class="r">지급액</th>
+    <th>집행률 (확정÷예산)</th><th class="r">잔여</th><th>메모</th><th></th></tr></thead><tbody>
+    ${c.lines.map(l=>{ const over=l.budget>0&&l.committed>l.budget;
+      return `<tr><td><b>${esc(l.kind)}</b>${l.budget===0&&l.committed>0?' <span class="b a">예산없음</span>':''}</td>
+      <td class="r num">${wonS(l.budget)}</td><td class="r num">${wonS(l.committed)}</td><td class="r num">${wonS(l.paid)}</td>
+      <td>${l.budget>0?execBar(l.committed/l.budget, over):'<span class="hint">-</span>'}</td>
+      <td class="r num" style="${l.budget-l.committed<0?'color:var(--danger);font-weight:800':''}">${wonS(l.budget-l.committed)}</td>
+      <td class="mini">${esc(l.memo||'')}</td>
+      <td>${budgetsOf(c.cc).some(b=>(b.kind||'(구분없음)')===l.kind)?`<button class="btn ghost sm" onclick="editBudKind('${esc(c.cc)}','${esc(l.kind)}')">편집</button>`:`<button class="btn ghost sm" onclick="editBud(null,'${esc(c.cc)}','${esc(l.kind)}')">예산 잡기</button>`}</td></tr>`; }).join('')
+      || `<tr><td colspan="8" class="empty">예산 라인이 없습니다. 위 <b>+ 라인</b>으로 지출구분별 예산을 잡으세요.</td></tr>`}
+    </tbody>${c.lines.length?`<tfoot><tr><td>합계</td><td class="r num">${wonS(bud)}</td><td class="r num">${wonS(com)}</td>
+    <td class="r num">${wonS(paid)}</td><td>${bud>0?execBar(com/bud, com>bud):''}</td>
+    <td class="r num">${wonS(bud-com)}</td><td colspan="2" class="mini">계획마진 ${wonS(c.estMargin)} → 전망 ${wonS(c.fcMargin)} → 확정 ${wonS(c.actMargin)}</td></tr></tfoot>`:''}
+    </table></div></div>`; }).join('') ||
+    `<div class="card"><div class="empty">아직 예산 라인이 없습니다. <b>+ 예산 라인</b>으로 시작하거나, 원가센터를 선택해 확정 지출부터 확인하세요.</div></div>`}
+  <p class="hint">마진 3단계 — 계획: 매출−(예산+예비비+인건비) · 전망: 예산이 남은 라인은 예산으로, 초과 라인은 확정액으로 계산 · 확정: 매출−인건비−확정액</p>`;
+}
+function editBud(id, cc, kind){
+  const isNew=!id;
+  const b=isNew?{id:uid('b'),cc:cc||'',kind:kind||'',amount:0,memo:''}:DB.budgets.find(x=>x.id===id);
+  if(!b) return;
+  openModal(isNew?'새 예산 라인':'예산 라인 편집', `<div class="fgrid">
+  <div class="f"><label>원가센터</label><select id="f_cc">${opt(allCC(),b.cc)}</select></div>
+  <div class="f"><label>지출구분</label><select id="f_kind">${opt(DB.settings['지출구분']||[],b.kind)}</select></div>
+  <div class="f"><label>예산 (원)</label><input id="f_amt" type="number" value="${b.amount||''}"></div>
+  <div class="f"><label>메모</label><input id="f_memo" value="${esc(b.memo)}"></div>
+  </div><p class="hint" style="margin-top:10px">같은 원가센터·지출구분에 여러 라인을 넣으면 합산됩니다. 인건비는 인력분배에서 자동 계산되므로 예산에 넣지 않습니다.</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    if(!g('f_cc')){ toast('원가센터를 선택하세요'); return false; }
+    Object.assign(b,{cc:g('f_cc'),kind:g('f_kind'),amount:+g('f_amt')||0,memo:g('f_memo')});
+    if(isNew) DB.budgets.push(b); save(); render(); return true;
+  }, isNew?null:()=>{ DB.budgets=DB.budgets.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+function editBudKind(cc, kind){
+  const hits=DB.budgets.filter(b=>b.cc===cc&&(b.kind||'(구분없음)')===kind);
+  if(hits.length===1) return editBud(hits[0].id);
+  openModal('예산 라인 · '+esc(cc)+' / '+esc(kind), `<ul class="mini">
+  ${hits.map(b=>`<li>${won(b.amount)} ${b.memo?'· '+esc(b.memo):''}
+   <button class="btn ghost sm" style="margin-left:8px" onclick="editBud('${b.id}')">편집</button></li>`).join('')}</ul>`, null);
+}
+
+/* ── 설정·백업 ── */
+function vSet(){
+  const snaps = (()=>{ try{ return JSON.parse(localStorage.getItem(SNAP_KEY)||'[]'); }catch(e){ return []; } })();
+  return `<h1 class="page">설정 · 백업</h1><p class="pagesub">드롭다운 항목, 판정 기준, 데이터 백업을 관리합니다</p>
+  <div class="card"><div class="hd"><h2>데이터 백업</h2></div><div class="bd">
+   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn" onclick="exportJSON()">JSON 내보내기</button>
+    <label class="btn ghost" style="cursor:pointer">JSON 불러오기<input type="file" accept=".json" style="display:none" onchange="importJSON(this)"></label>
+    <button class="btn ghost" onclick="snapNow()">지금 스냅샷</button>
+    <button class="btn dangerous" onclick="resetSeed()">엑셀 원본으로 초기화</button>
+   </div>
+   <p class="hint" style="margin-top:10px">데이터는 이 브라우저의 localStorage에만 저장됩니다. 기기·브라우저를 옮기면 안 보입니다 — JSON 내보내기로 옮기세요. 접속일마다 자동 스냅샷을 1개 남깁니다(최근 10개).</p>
+   ${snaps.length?`<div class="subsec"><h4>스냅샷 (최근 ${snaps.length}개)</h4><ul class="mini">
+   ${snaps.map((s,i)=>`<li>${esc(s.d)} <small class="hint">${esc((s.t||'').slice(11,16))}</small>
+     <button class="btn ghost sm" style="margin-left:8px" onclick="restoreSnap(${i})">이 시점으로 복원</button></li>`).join('')}</ul></div>`:''}
+  </div></div>
+  <div class="card"><div class="hd"><h2>수익성 판정 기준</h2></div><div class="bd"><div class="fgrid">
+   <div class="f"><label>저마진 기준 (미만, 예: 0.10)</label><input type="number" step="0.01" value="${DB.thresholds.low}" onchange="DB.thresholds.low=+this.value||0.1;save();render()"></div>
+   <div class="f"><label>주의 기준 (미만, 예: 0.25)</label><input type="number" step="0.01" value="${DB.thresholds.warn}" onchange="DB.thresholds.warn=+this.value||0.25;save();render()"></div>
+  </div></div></div>
+  <div class="card"><div class="hd"><h2>드롭다운 항목</h2><span class="hint">줄바꿈으로 구분</span></div><div class="bd"><div class="fgrid">
+  ${Object.keys(DB.settings).map(k=>`<div class="f"><label>${esc(k)}</label>
+   <textarea onchange="DB.settings['${esc(k)}']=this.value.split('\\n').map(s=>s.trim()).filter(Boolean);save()">${esc((DB.settings[k]||[]).join('\n'))}</textarea></div>`).join('')}
+  </div></div></div>
+  <div class="card"><div class="hd"><h2>연결맵 · 어디에 무엇을 입력하나</h2></div><div class="tw"><table>
+  <thead><tr><th>화면</th><th>내가 입력하는 것</th><th>자동 연결되는 것</th></tr></thead><tbody>
+  <tr><td><b>대시보드</b></td><td>입력 없음</td><td>마스터/수익성 요약 — 회의 때 보는 화면</td></tr>
+  <tr><td><b>프로젝트</b></td><td>기본정보, 원가센터, 액션, 예상매출</td><td>D-Day, 수익성상태, 마진율</td></tr>
+  <tr><td><b>인력분배</b></td><td>사람별 원가센터 투입률, 월 단가</td><td>총할당률/잔여/상태, 수익성 내부인건비</td></tr>
+  <tr><td><b>예산·집행</b></td><td>원가센터 × 지출구분별 예산 라인</td><td>확정액/지급액/집행률/잔여, 수익성 외부지출예산</td></tr>
+  <tr><td><b>지출</b></td><td>실제 지출내역 (하위 코드 기준, 결제상태 포함)</td><td>프로젝트명/원가센터/예산 라인 자동 합산</td></tr>
+  <tr><td><b>수익성</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
+  <tr><td><b>재무</b></td><td>클라이언트, 계약금, 선금/중도금/잔금</td><td>입금합계, 미수금</td></tr>
+  <tr><td><b>결정로그</b></td><td>중단/취소 사유, 결정사항</td><td>프로젝트명 자동 연결 — 삭제 대신 기록</td></tr>
+  </tbody></table></div></div>`;
+}
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(DB,null,1)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='spextrum_control_tower_'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+  URL.revokeObjectURL(a.href); toast('내보내기 완료');
+}
+function importJSON(input){
+  const file=input.files[0]; if(!file) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
+    if(!d.projects||!Array.isArray(d.projects)) throw 0;
+    if(!confirm(`불러온 파일: 프로젝트 ${d.projects.length}건.\n현재 데이터를 이 파일로 교체할까요? (교체 전 스냅샷을 남깁니다)`)) return;
+    snapNow(true); DB=d; save(); render(); toast('불러오기 완료');
+  }catch(e){ toast('파일 형식이 올바르지 않습니다'); } };
+  rd.readAsText(file); input.value='';
+}
+function snapNow(silent){
+  try{ const snaps=JSON.parse(localStorage.getItem(SNAP_KEY)||'[]');
+    snaps.unshift({d:new Date().toISOString().slice(0,10)+' (수동)', t:new Date().toISOString(), data:DB});
+    while(snaps.length>10) snaps.pop();
+    localStorage.setItem(SNAP_KEY, JSON.stringify(snaps));
+    if(!silent){ toast('스냅샷 저장'); render(); } }catch(e){ toast('스냅샷 실패'); }
+}
+function restoreSnap(i){
+  try{ const snaps=JSON.parse(localStorage.getItem(SNAP_KEY)||'[]');
+    if(!snaps[i]) return;
+    if(!confirm(snaps[i].d+' 시점으로 복원할까요? 현재 상태는 수동 스냅샷으로 남깁니다.')) return;
+    snapNow(true); DB=structuredClone(snaps[i].data); save(); render(); toast('복원 완료'); }catch(e){}
+}
+function resetSeed(){
+  if(!confirm('엑셀에서 가져온 원본 데이터로 되돌립니다.\n이후 수정한 내용은 사라집니다 (복원용 스냅샷은 남김). 진행할까요?')) return;
+  snapNow(true); DB=structuredClone(SEED); save(); render(); toast('초기화 완료');
+}
+
+/* ═══════════ modal ═══════════ */
+let modalSave=null;
+function openModal(title, body, onSave, onDelete){
+  modalSave=onSave;
+  document.getElementById('modal').innerHTML=`<h3>${title}<button class="x" onclick="closeModal()">✕</button></h3>
+  ${body}<div class="macts">
+  ${onDelete?`<button class="btn dangerous" id="mdel">삭제</button>`:''}
+  <button class="btn ghost" onclick="closeModal()">닫기</button>
+  <button class="btn" onclick="if(modalSave&&modalSave()!==false)closeModal()">저장</button></div>`;
+  if(onDelete) document.getElementById('mdel').onclick=onDelete;
+  document.getElementById('ovl').classList.add('show');
+}
+function closeModal(){ document.getElementById('ovl').classList.remove('show'); modalSave=null; }
+document.getElementById('ovl').addEventListener('click',e=>{ if(e.target.id==='ovl') closeModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); closeSheet(); } });
+
+render();
+</script>
 </body>
 </html>
