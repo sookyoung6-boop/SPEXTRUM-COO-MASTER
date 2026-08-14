@@ -278,8 +278,9 @@ function fbBoot(){
   .then(snap=>{
     const v=snap&&snap.val();
     fbReady=true;
-    if(v && v.data){ // 서버가 정본
-      DB=v.data; migrate(); baseRev=v.rev||0; dirty=false;
+    const srvData = v && (v.json ? JSON.parse(v.json) : v.data);
+    if(srvData){ // 서버가 정본
+      DB=srvData; migrate(); baseRev=v.rev||0; dirty=false;
       try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
       render(); setStatus('온라인 · 서버 데이터 불러옴','ok');
     } else { // 서버 비어있음 → 최초 업로드
@@ -296,10 +297,10 @@ function doSync(){
     const srv=s.val()||0;
     if(srv!==baseRev){ conflicted=true; setStatus('⚠ 다른 기기 변경 감지','off'); conflictModal(srv); return; }
     const nr=baseRev+1;
-    return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), data:JSON.parse(JSON.stringify(DB))})
+    return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), json:JSON.stringify(DB)})
       .then(()=>{ baseRev=nr; dirty=false;
         setStatus('저장됨 · '+new Date().toTimeString().slice(0,5),'ok'); });
-  }).catch(e=>{ setStatus('저장 실패 — 재시도 대기','off'); setTimeout(()=>{ if(dirty) scheduleSync(); },4000); });
+  }).catch(e=>{ setStatus('저장 실패('+((e&&(e.code||e.message))||'?')+') — 재시도 대기','off'); setTimeout(()=>{ if(dirty) scheduleSync(); },4000); });
 }
 /* 창 복귀 시 서버 변경 확인: 내 수정 없으면 조용히 반영, 있으면 충돌 안내 */
 function checkRemote(){
@@ -309,7 +310,8 @@ function checkRemote(){
     if(srv===baseRev) return;
     if(!dirty){
       fbdb.ref(FB_PATH).get().then(sn=>{ const v=sn.val();
-        if(v&&v.data){ DB=v.data; migrate(); baseRev=v.rev||0;
+        const sd=v&&(v.json?JSON.parse(v.json):v.data);
+        if(sd){ DB=sd; migrate(); baseRev=v.rev||0;
           try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
           render(); toast('다른 기기의 변경을 반영했습니다'); } });
     } else { conflicted=true; conflictModal(srv); }
@@ -334,13 +336,14 @@ function resolveConflict(which, srvRev){
   if(which==='server'){
     snapNow(true);
     fbdb.ref(FB_PATH).get().then(sn=>{ const v=sn.val();
-      if(v&&v.data){ DB=v.data; migrate(); baseRev=v.rev||0; dirty=false; conflicted=false;
+      const sd=v&&(v.json?JSON.parse(v.json):v.data);
+      if(sd){ DB=sd; migrate(); baseRev=v.rev||0; dirty=false; conflicted=false;
         try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
         closeModal(); render(); setStatus('온라인 · 서버 데이터 불러옴','ok'); toast('서버 데이터로 맞췄습니다'); } });
   } else {
     fbdb.ref(FB_PATH+'/rev').get().then(s=>{
       const nr=(s.val()||srvRev||0)+1;
-      return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), data:JSON.parse(JSON.stringify(DB))})
+      return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), json:JSON.stringify(DB)})
         .then(()=>{ baseRev=nr; dirty=false; conflicted=false; closeModal();
           setStatus('저장됨 (덮어씀)','ok'); toast('내 데이터로 덮어썼습니다'); });
     });
