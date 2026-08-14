@@ -142,6 +142,12 @@ tfoot td{font-weight:800;background:#FAFBFA}
 .hint{font-size:11.5px;color:var(--sub)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--ink);color:#fff;padding:9px 16px;border-radius:999px;font-size:13px;font-weight:600;z-index:90;opacity:0;transition:opacity .2s}
 .toast.show{opacity:1}
+.sync{position:fixed;right:12px;bottom:12px;z-index:80;background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:5px 12px;font-size:11.5px;font-weight:700;color:var(--sub);box-shadow:var(--shadow)}
+.sync.ok{color:var(--ok);border-color:#BFDCCB}
+.sync.wait{color:var(--amber)}
+.sync.off{color:var(--danger);border-color:#E8B7AA;background:var(--danger-bg)}
+@media(max-width:900px){.sync{bottom:calc(64px + env(safe-area-inset-bottom))}}
 ul.notes{font-size:12.5px;color:var(--sub);padding-left:18px;display:flex;flex-direction:column;gap:4px}
 .mtx{font-size:12px}
 .mtx th{position:sticky;top:0}
@@ -182,6 +188,7 @@ ul.notes{font-size:12.5px;color:var(--sub);padding-left:18px;display:flex;flex-d
 
 <div id="ovl"><div id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div id="sync" class="sync" style="display:none">로컬 모드</div>
 
 <script>
 /* ═══════════ seed data (엑셀에서 이관) ═══════════ */
@@ -189,13 +196,46 @@ const SEED = {"v": 1, "settings": {"대분류": ["자사 브랜드/제품", "IP/
 
 /* ═══════════ storage ═══════════ */
 const LS_KEY='spx_ct_v1', SNAP_KEY='spx_ct_snaps';
+
+/* ═══ Firebase 온라인 동기화 (선택) ═══════════════════════════════
+   아래 FIREBASE_CONFIG 에 Firebase 콘솔 값(프로젝트 설정 → 내 앱 → firebaseConfig)을
+   붙여넣으면 온라인 모드가 됩니다. null 이면 지금처럼 이 브라우저에만 저장(로컬 모드).
+   예시:
+   const FIREBASE_CONFIG = {
+     apiKey: "AIza...",
+     authDomain: "spextrum-hub.firebaseapp.com",
+     databaseURL: "https://spextrum-hub-default-rtdb.asia-southeast1.firebasedatabase.app",
+     projectId: "spextrum-hub",
+     storageBucket: "spextrum-hub.appspot.com",
+     messagingSenderId: "…",
+     appId: "…"
+   };
+   ※ Realtime Database 규칙에 controlTower 노드 읽기/쓰기 허용이 필요합니다 (설정·백업 탭 안내 참고).
+════════════════════════════════════════════════════════════════ */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBJiOwAgjecEFUA2bF566zsmvNVly2Z0m4",
+  authDomain: "spextrumcoomaster.firebaseapp.com",
+  databaseURL: "https://spextrumcoomaster-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "spextrumcoomaster",
+  storageBucket: "spextrumcoomaster.firebasestorage.app",
+  messagingSenderId: "972041764904",
+  appId: "1:972041764904:web:93d21ae3d869963860351d"
+};
+const FB_PATH='controlTower';
+let fbdb=null, fbReady=false, baseRev=0, dirty=false, fbOnline=true, conflicted=false;
+
 let DB;
 try{ DB = JSON.parse(localStorage.getItem(LS_KEY)) || structuredClone(SEED); }
 catch(e){ DB = structuredClone(SEED); }
-/* v2 마이그레이션: 예산 라인 · 결제상태 목록 */
-DB.budgets = DB.budgets || [];               // {id, cc, kind, amount, memo}
-DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
-DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
+function migrate(){
+  DB.budgets = DB.budgets || [];               // {id, cc, kind, amount, memo}
+  DB.settings = DB.settings || {};
+  DB.thresholds = DB.thresholds || {low:0.10, warn:0.25};
+  DB.profitInputs = DB.profitInputs || [];
+  DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
+  DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
+}
+migrate();
 // daily snapshot on load (max 10)
 (function(){
   try{
@@ -211,7 +251,109 @@ DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시
 let saveTimer=null;
 function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{
   try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('저장 실패: 저장공간 확인'); }
+  if(FIREBASE_CONFIG){ dirty=true; scheduleSync(); }
 },300); }
+
+/* ── 동기화 엔진: 서버 우선 로드 + rev 검사 쓰기 (last-write-wins 차단) ── */
+let syncTimer=null;
+function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(doSync, 700); }
+function setStatus(txt, cls){ const el=document.getElementById('sync'); if(!el) return;
+  el.textContent=txt; el.className='sync '+(cls||''); el.style.display=FIREBASE_CONFIG?'block':'none'; }
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+function fbBoot(){
+  if(!FIREBASE_CONFIG) return;
+  setStatus('서버 연결 중…','wait');
+  loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js')
+  .then(()=>loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js'))
+  .then(()=>{
+    firebase.initializeApp(FIREBASE_CONFIG); fbdb=firebase.database();
+    fbdb.ref('.info/connected').on('value',s=>{
+      fbOnline=!!s.val();
+      if(!fbOnline) setStatus('오프라인 — 지금 입력분은 복귀 후 저장','off');
+      else { setStatus('온라인','ok'); if(dirty&&!conflicted) scheduleSync(); }
+      renderOfflineBar();
+    });
+    return fbdb.ref(FB_PATH).get();
+  })
+  .then(snap=>{
+    const v=snap&&snap.val();
+    fbReady=true;
+    if(v && v.data){ // 서버가 정본
+      DB=v.data; migrate(); baseRev=v.rev||0; dirty=false;
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
+      render(); setStatus('온라인 · 서버 데이터 불러옴','ok');
+    } else { // 서버 비어있음 → 최초 업로드
+      dirty=true; doSync(); setStatus('온라인 · 최초 업로드','ok');
+    }
+  })
+  .catch(e=>{ fbReady=false; setStatus('서버 연결 실패 — 로컬 모드','off'); });
+}
+function doSync(){
+  if(!fbdb||!fbReady||conflicted) return;
+  if(!fbOnline){ setStatus('오프라인 — 저장 대기','off'); return; }
+  setStatus('저장 중…','wait');
+  fbdb.ref(FB_PATH+'/rev').get().then(s=>{
+    const srv=s.val()||0;
+    if(srv!==baseRev){ conflicted=true; setStatus('⚠ 다른 기기 변경 감지','off'); conflictModal(srv); return; }
+    const nr=baseRev+1;
+    return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), data:JSON.parse(JSON.stringify(DB))})
+      .then(()=>{ baseRev=nr; dirty=false;
+        setStatus('저장됨 · '+new Date().toTimeString().slice(0,5),'ok'); });
+  }).catch(e=>{ setStatus('저장 실패 — 재시도 대기','off'); setTimeout(()=>{ if(dirty) scheduleSync(); },4000); });
+}
+/* 창 복귀 시 서버 변경 확인: 내 수정 없으면 조용히 반영, 있으면 충돌 안내 */
+function checkRemote(){
+  if(!fbdb||!fbReady||!fbOnline||conflicted) return;
+  fbdb.ref(FB_PATH+'/rev').get().then(s=>{
+    const srv=s.val()||0;
+    if(srv===baseRev) return;
+    if(!dirty){
+      fbdb.ref(FB_PATH).get().then(sn=>{ const v=sn.val();
+        if(v&&v.data){ DB=v.data; migrate(); baseRev=v.rev||0;
+          try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
+          render(); toast('다른 기기의 변경을 반영했습니다'); } });
+    } else { conflicted=true; conflictModal(srv); }
+  }).catch(()=>{});
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) checkRemote(); });
+window.addEventListener('focus', checkRemote);
+function conflictModal(srvRev){
+  openModal('다른 기기에서 변경됨', `
+  <p style="font-size:13.5px;line-height:1.6">이 화면을 연 뒤에 <b>다른 기기(또는 다른 탭)</b>에서 데이터가 저장됐습니다.<br>
+  안전을 위해 이 화면의 저장을 잠시 멈췄습니다.</p>
+  <ul class="notes" style="margin-top:10px">
+    <li><b>서버 데이터 불러오기 (권장)</b> — 이 화면에서 방금 고친 내용은 사라지지만, 현재 상태를 스냅샷으로 남깁니다.</li>
+    <li><b>내 데이터로 덮어쓰기</b> — 다른 기기의 변경이 사라질 수 있습니다. 확실할 때만.</li>
+  </ul>
+  <div class="macts">
+    <button class="btn dangerous" onclick="resolveConflict('mine',${srvRev||0})">내 데이터로 덮어쓰기</button>
+    <button class="btn" onclick="resolveConflict('server')">서버 데이터 불러오기</button>
+  </div>`, null);
+}
+function resolveConflict(which, srvRev){
+  if(which==='server'){
+    snapNow(true);
+    fbdb.ref(FB_PATH).get().then(sn=>{ const v=sn.val();
+      if(v&&v.data){ DB=v.data; migrate(); baseRev=v.rev||0; dirty=false; conflicted=false;
+        try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){}
+        closeModal(); render(); setStatus('온라인 · 서버 데이터 불러옴','ok'); toast('서버 데이터로 맞췄습니다'); } });
+  } else {
+    fbdb.ref(FB_PATH+'/rev').get().then(s=>{
+      const nr=(s.val()||srvRev||0)+1;
+      return fbdb.ref(FB_PATH).set({rev:nr, updatedAt:new Date().toISOString(), data:JSON.parse(JSON.stringify(DB))})
+        .then(()=>{ baseRev=nr; dirty=false; conflicted=false; closeModal();
+          setStatus('저장됨 (덮어씀)','ok'); toast('내 데이터로 덮어썼습니다'); });
+    });
+  }
+}
+function renderOfflineBar(){
+  let bar=document.getElementById('offbar');
+  if(FIREBASE_CONFIG && !fbOnline){
+    if(!bar){ bar=document.createElement('div'); bar.id='offbar';
+      bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:95;background:var(--danger);color:#fff;text-align:center;font-size:12.5px;font-weight:700;padding:6px';
+      bar.textContent='오프라인 — 지금 입력하는 내용은 인터넷 복귀 후에 저장됩니다'; document.body.appendChild(bar); }
+  } else if(bar) bar.remove();
+}
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1600); }
 
 /* ═══════════ helpers ═══════════ */
@@ -972,6 +1114,24 @@ function editBudKind(cc, kind){
 function vSet(){
   const snaps = (()=>{ try{ return JSON.parse(localStorage.getItem(SNAP_KEY)||'[]'); }catch(e){ return []; } })();
   return `${pageHead(`설정 · 백업`,`드롭다운 항목, 판정 기준, 데이터 백업을 관리합니다`)}
+  <div class="card"><div class="hd"><h2>온라인 동기화 (사무실↔집)</h2></div><div class="bd">
+   ${FIREBASE_CONFIG?`<p style="font-size:13px">✅ <b>온라인 모드</b> — 데이터가 Firebase 서버(controlTower)에 저장됩니다. 어느 기기에서 열어도 같은 데이터가 보이고, 열 때·창으로 돌아올 때 서버 기준으로 맞춥니다. 다른 기기 변경과 겹치면 저장을 멈추고 물어봅니다.</p>`
+   :`<p style="font-size:13px">⚠ <b>로컬 모드</b> — 지금은 이 브라우저에만 저장됩니다. 사무실·집에서 같이 쓰려면:</p>
+   <ul class="notes" style="margin-top:8px">
+     <li>① Firebase 콘솔 → 프로젝트 설정 → 내 앱에서 <b>firebaseConfig</b> 값을 복사</li>
+     <li>② 이 HTML 파일을 텍스트 편집기로 열어 상단의 <b>const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBJiOwAgjecEFUA2bF566zsmvNVly2Z0m4",
+  authDomain: "spextrumcoomaster.firebaseapp.com",
+  databaseURL: "https://spextrumcoomaster-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "spextrumcoomaster",
+  storageBucket: "spextrumcoomaster.firebasestorage.app",
+  messagingSenderId: "972041764904",
+  appId: "1:972041764904:web:93d21ae3d869963860351d"
+};</b> 부분에 붙여넣기 (파일 안에 예시 있음)</li>
+     <li>③ Realtime Database → 규칙에 <b>controlTower</b> 노드 읽기/쓰기 허용 추가</li>
+     <li>④ 수정한 파일을 GitHub에 index.html로 다시 업로드</li>
+   </ul>`}
+  </div></div>
   <div class="card"><div class="hd"><h2>데이터 백업</h2></div><div class="bd">
    <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn" onclick="exportJSON()">JSON 내보내기</button>
@@ -1055,6 +1215,8 @@ document.getElementById('ovl').addEventListener('click',e=>{ if(e.target.id==='o
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); closeSheet(); } });
 
 render();
+fbBoot();
+setStatus(FIREBASE_CONFIG?"서버 연결 중…":"", "wait");
 </script>
 </body>
 </html>
