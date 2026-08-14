@@ -27,15 +27,27 @@ aside#side{width:196px;flex:0 0 196px;background:var(--surface);border-right:1px
   padding:20px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px}
 #side .logo{font-weight:800;font-size:15px;letter-spacing:.04em;padding:4px 10px 2px;color:var(--brand-ink)}
 #side .logo small{display:block;font-weight:600;font-size:10.5px;letter-spacing:.14em;color:var(--sub);margin-top:1px}
-#side nav{margin-top:14px;display:flex;flex-direction:column;gap:2px}
+#side nav{margin-top:10px;display:flex;flex-direction:column;gap:2px}
+#side .navgrp,#sheet .navgrp{font-size:10.5px;font-weight:800;letter-spacing:.12em;color:var(--sub);opacity:.75;padding:14px 10px 4px;text-transform:uppercase}
+#side .navgrp:first-child{padding-top:4px}
 #side nav button{display:flex;align-items:center;gap:9px;text-align:left;padding:8px 10px;border-radius:8px;color:var(--sub);font-weight:600;font-size:13.5px}
 #side nav button.on{background:var(--brand-soft);color:var(--brand-ink)}
 #side nav button:hover{background:var(--gray-bg)}
 #side nav button.on:hover{background:var(--brand-soft)}
 #side .foot{margin-top:auto;padding:8px 10px;font-size:11px;color:var(--sub)}
 main{flex:1;min-width:0;padding:20px 22px 90px;max-width:1180px}
-h1.page{font-size:19px;font-weight:800;margin-bottom:2px}
-p.pagesub{color:var(--sub);font-size:12.5px;margin-bottom:16px}
+h1.page{font-size:19px;font-weight:800}
+.phead{position:relative;display:inline-flex;align-items:center;gap:7px;margin-bottom:14px}
+.tip{flex:0 0 auto;width:17px;height:17px;border-radius:50%;background:var(--gray-bg);color:var(--sub);
+  font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;cursor:help}
+.tipbox{display:none;position:absolute;top:calc(100% + 7px);left:0;z-index:45;background:var(--ink);color:#fff;
+  font-size:12px;font-weight:500;line-height:1.55;padding:9px 13px;border-radius:9px;max-width:min(440px,86vw);
+  width:max-content;box-shadow:0 6px 20px rgba(23,33,30,.25)}
+.tipbox b{color:#fff}
+.tipbox::before{content:'';position:absolute;top:-5px;left:14px;width:10px;height:10px;background:var(--ink);transform:rotate(45deg)}
+@media (hover:hover){.phead:hover .tipbox{display:block}}
+.tip:focus{outline:2px solid var(--brand);outline-offset:1px}
+.tip:focus~.tipbox{display:block}
 
 /* ── status strip (signature) ── */
 #strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 14px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -183,6 +195,7 @@ catch(e){ DB = structuredClone(SEED); }
 /* v2 마이그레이션: 예산 라인 · 결제상태 목록 */
 DB.budgets = DB.budgets || [];               // {id, cc, kind, amount, memo}
 DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
+DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
 // daily snapshot on load (max 10)
 (function(){
   try{
@@ -215,6 +228,7 @@ function ddayHtml(v){ if(v===null) return '<span class="hint">-</span>';
 const projOf = code => DB.projects.find(p=>p.code===code);
 const pname = p => p ? (p.parent && p.sub ? p.parent+' / '+p.sub : (p.sub||p.parent||p.code)) : '';
 const pnameByCode = code => { const p=projOf(code); return p?pname(p):code; };
+function pageHead(t,d){ return `<div class="phead"><h1 class="page">${t}</h1>${d?`<button class="tip" aria-label="설명 보기">?</button><span class="tipbox">${d}</span>`:''}</div>`; }
 function statusBadge(s){ const m={'진행중':'g','완료':'bl','위험':'rd','중단':'rd','취소':'gy','대기':'gy','보류':'gy','지연':'a'}; return `<span class="b ${m[s]||'gy'}">${esc(s||'-')}</span>`; }
 function profBadge(s){ const m={'정상':'g','주의':'a','저마진':'a','적자':'rd','매출미입력':'gy'}; return `<span class="b ${m[s]||'gy'}">${esc(s)}</span>`; }
 function uid(pre){ return pre+Date.now().toString(36)+Math.random().toString(36).slice(2,5); }
@@ -291,29 +305,36 @@ function personCalc(per){ const t=Object.values(per.alloc).reduce((a,v)=>a+(+v||
 
 /* ═══════════ navigation ═══════════ */
 const VIEWS=[
- {id:'dash', name:'대시보드', ic:'◎'},
- {id:'proj', name:'프로젝트', ic:'▤'},
- {id:'week', name:'주간액션', ic:'☑'},
- {id:'prof', name:'수익성', ic:'₩'},
- {id:'bud', name:'예산·집행', ic:'◧'},
- {id:'dec', name:'결정로그', ic:'✎'},
- {id:'fin', name:'재무', ic:'▦'},
- {id:'ppl', name:'인력분배', ic:'👥'},
- {id:'exp', name:'지출', ic:'▨'},
- {id:'set', name:'설정·백업', ic:'⚙'},
+ // 업무 — 무엇을 하나
+ {id:'dash', name:'오늘 현황', short:'오늘', ic:'◎', grp:'업무'},
+ {id:'proj', name:'프로젝트', short:'프로젝트', ic:'▤', grp:'업무'},
+ {id:'week', name:'이번 주 할 일', short:'이번 주', ic:'☑', grp:'업무'},
+ {id:'dec', name:'결정 기록', ic:'✎', grp:'업무'},
+ // 돈 — 들어오고, 계획하고, 나가고, 남는 순서
+ {id:'fin', name:'계약·입금', ic:'▦', grp:'돈'},
+ {id:'bud', name:'예산 대비 지출', ic:'◧', grp:'돈'},
+ {id:'exp', name:'지출 장부', ic:'▨', grp:'돈'},
+ {id:'prof', name:'수익성 결론', short:'수익성', ic:'₩', grp:'돈'},
+ // 관리
+ {id:'ppl', name:'인력분배', ic:'👥', grp:'관리'},
+ {id:'set', name:'설정·백업', ic:'⚙', grp:'관리'},
 ];
 const MOBILE_MAIN=['dash','proj','week','prof'];
 let CUR='dash';
 function go(id){ CUR=id; closeSheet(); render(); window.scrollTo(0,0); }
 function renderNav(){
-  document.getElementById('pcnav').innerHTML = VIEWS.map(v=>
-    `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join('');
+  const groups=[...new Set(VIEWS.map(v=>v.grp))];
+  document.getElementById('pcnav').innerHTML = groups.map(g=>
+    `<div class="navgrp">${g}</div>`+VIEWS.filter(v=>v.grp===g).map(v=>
+    `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join('')).join('');
   const mb = MOBILE_MAIN.map(id=>{ const v=VIEWS.find(x=>x.id===id);
-    return `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span class="ic">${v.ic}</span>${v.name}</button>`; }).join('');
+    return `<button class="${CUR===v.id?'on':''}" onclick="go('${v.id}')"><span class="ic">${v.ic}</span>${v.short||v.name}</button>`; }).join('');
   document.getElementById('mbnav').innerHTML = mb +
     `<button class="${!MOBILE_MAIN.includes(CUR)?'on':''}" onclick="openSheet()"><span class="ic">≡</span>더보기</button>`;
-  document.getElementById('sheetItems').innerHTML = VIEWS.filter(v=>!MOBILE_MAIN.includes(v.id)).map(v=>
-    `<button class="item" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join('');
+  document.getElementById('sheetItems').innerHTML = groups.map(g=>{
+    const items=VIEWS.filter(v=>v.grp===g&&!MOBILE_MAIN.includes(v.id));
+    return items.length?`<div class="navgrp" style="padding:6px 8px 2px">${g}</div>`+items.map(v=>
+    `<button class="item" onclick="go('${v.id}')"><span>${v.ic}</span>${v.name}</button>`).join(''):''; }).join('');
 }
 function openSheet(){ document.getElementById('sheet').classList.add('show'); document.getElementById('sheetbg').classList.add('show'); }
 function closeSheet(){ document.getElementById('sheet').classList.remove('show'); document.getElementById('sheetbg').classList.remove('show'); }
@@ -352,8 +373,7 @@ function vDash(){
   }).sort((a,b)=>{ const da=dday(a.due), db_=dday(b.due);
     return (da===null?9999:da)-(db_===null?9999:db_); });
   const probs = allCC().map(ccCalc).filter(c=>c.state!=='정상' && (c.count>0||c.labor>0));
-  return `<h1 class="page">오늘 볼 것만 봅니다</h1>
-  <p class="pagesub">입력은 프로젝트·지출·인력·수익성 탭에서, 여기는 요약만.</p>
+  return `${pageHead(`오늘 볼 것만 봅니다`,`입력은 프로젝트·지출 장부·인력분배·예산 탭에서, 여기는 요약만.`)}
   <div class="card"><div class="hd"><h2>오늘 확인할 프로젝트</h2><span class="hint">위험 · 마감 30일 이내 · 저마진 · 결정/리스크 보유</span></div>
   <div class="tw"><table><thead><tr><th>프로젝트</th><th>Owner</th><th>상태</th><th>D-Day</th><th>이번 달 액션</th><th>결정/리스크</th><th>수익성</th></tr></thead><tbody>
   ${watch.map(p=>{ const pr=projProf(p);
@@ -371,7 +391,7 @@ function vDash(){
     || '<tr><td colspan="6" class="empty">문제 있는 원가센터가 없습니다.</td></tr>'}
   </tbody></table></div></div>
   <div class="card"><div class="hd"><h2>사용 기준</h2></div><div class="bd"><ul class="notes">
-    <li>입력은 <b>프로젝트 / 지출 / 인력분배 / 수익성</b> 탭에서 합니다.</li>
+    <li>입력은 <b>프로젝트 / 지출 장부 / 인력분배 / 예산 대비 지출</b>에서 합니다. 돈 흐름은 계약·입금 → 예산 → 지출 → 수익성 순서로 봅니다.</li>
     <li>중단·취소는 삭제하지 말고 <b>상태값</b>으로 남깁니다. 사유는 결정로그에 기록.</li>
     <li>원가센터는 인건비와 수익성 계산의 묶음 단위입니다. 업무 관리는 하위 프로젝트 기준.</li>
     <li>데이터는 이 브라우저에만 저장됩니다. <b>설정·백업</b>에서 주기적으로 JSON 내보내기.</li>
@@ -385,7 +405,7 @@ function vProj(){
   let rows=DB.projects.filter(p=>
     (!pf.cc||p.cc===pf.cc)&&(!pf.status||p.status===pf.status)&&
     (!pf.q||[p.code,p.parent,p.sub,p.owner,p.goal].join(' ').toLowerCase().includes(pf.q.toLowerCase())));
-  return `<h1 class="page">프로젝트 원장</h1><p class="pagesub">업무 관리는 하위 프로젝트 기준 · 행을 누르면 상세/편집</p>
+  return `${pageHead(`프로젝트 원장`,`업무 관리는 하위 프로젝트 기준 · 행을 누르면 상세/편집`)}
   <div class="filters">
     <select onchange="pf.cc=this.value;render()"><option value="">원가센터 전체</option>${ccs.map(c=>`<option ${pf.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
     <select onchange="pf.status=this.value;render()"><option value="">상태 전체</option>${(DB.settings['상태']||[]).map(s=>`<option ${pf.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
@@ -471,8 +491,10 @@ function vWeek(){
     return (!wf.owner||o===wf.owner)&&(!wf.open||w.status!=='완료'); });
   const byWeek={};
   rows.forEach(w=>{ (byWeek[w.week||'주차 미지정']=byWeek[w.week||'주차 미지정']||[]).push(w); });
-  const weeks=Object.keys(byWeek).sort().reverse();
-  return `<h1 class="page">주간 실행 보드</h1><p class="pagesub">체크하면 완료 처리 · 행을 누르면 편집</p>
+  const weeks=Object.keys(byWeek).sort((a,b)=>{
+    if(a==='주차 미지정') return 1; if(b==='주차 미지정') return -1;
+    return b.localeCompare(a); });
+  return `${pageHead(`주간 실행 보드`,`체크하면 완료 처리 · 행을 누르면 편집`)}
   <div class="filters">
     <div class="seg"><button class="on">보드</button><button onclick="wf.mode='plan';render()">📝 주간 계획</button></div>
     <select onchange="wf.owner=this.value;render()"><option value="">Owner 전체</option>${owners.map(o=>`<option ${wf.owner===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
@@ -510,8 +532,7 @@ function vPlan(){
   const carry = DB.weekly.filter(w=>w.week===prevWeek && w.status!=='완료' && w.todo && w.code);
   const owners=[...new Set(DB.projects.map(p=>p.owner).filter(o=>o&&o!=='-'))];
   const doneN = projs.filter(p=>{ const e=entryOf(p.code); return e&&e.todo.trim(); }).length;
-  return `<h1 class="page">주간 계획 · ${esc(week)} 주</h1>
-  <p class="pagesub">프로젝트를 위에서부터 훑으면서, 이번 주 할 일을 오른쪽에 바로 적으세요. 칸을 벗어나면 자동 저장됩니다.</p>
+  return `${pageHead(`주간 계획 · ${esc(week)} 주`,`프로젝트를 위에서부터 훑으면서, 이번 주 할 일을 오른쪽에 바로 적으세요. 칸을 벗어나면 자동 저장됩니다.`)}
   <div class="filters">
     <div class="seg"><button onclick="wf.mode='board';render()">보드</button><button class="on">📝 주간 계획</button></div>
     <input type="date" value="${esc(week)}" onchange="wf.planWeek=mondayOf(new Date(this.value));render()" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">
@@ -593,39 +614,102 @@ function editWeek(id){
 function mondayOf(d){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); return x.toISOString().slice(0,10); }
 
 /* ── 결정로그 ── */
-let df={status:''};
+let df={status:'',person:'',type:'',q:'',mode:'list'};
+function decTypeBadge(t){ const m={'결정':'g','지시':'bl','보고':'a','논의':'gy','합의':'g'}; return t?`<span class="b ${m[t]||'gy'}">${esc(t)}</span>`:''; }
+function decPeople(){ return [...new Set(DB.decisions.map(d=>d.decider).filter(x=>x&&x!=='-'))]; }
 function vDec(){
-  let rows=DB.decisions.filter(d=>!df.status||d.status===df.status);
-  return `<h1 class="page">결정 기록</h1><p class="pagesub">중단·취소 사유와 중요한 선택지를 남기는 곳 · 삭제 대신 기록</p>
+  if(df.mode==='rec') return vDecRec();
+  let rows=DB.decisions.filter(d=>
+    (!df.status||d.status===df.status)&&(!df.person||d.decider===df.person)&&(!df.type||d.type===df.type)&&
+    (!df.q||[d.issue,d.decision,d.followup,d.options,d.decider,pnameByCode(d.code)].join(' ').toLowerCase().includes(df.q.toLowerCase())));
+  rows=[...rows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  // 월별 그룹 (아카이브 느낌)
+  const byM={};
+  rows.forEach(d=>{ const k=d.date?d.date.slice(0,7):'날짜 미기재'; (byM[k]=byM[k]||[]).push(d); });
+  const months=Object.keys(byM).sort().reverse();
+  return `${pageHead(`결정 기록`,`누구에게 무엇을 지시·보고·결정했는지 남기는 아카이브 · 중단/취소 사유도 삭제 대신 여기에`)}
   <div class="filters">
+    <div class="seg"><button class="on">목록</button><button onclick="df.mode='rec';render()">📝 기록 모드</button></div>
+    <input type="search" placeholder="검색 (내용·사람·프로젝트)" value="${esc(df.q)}" oninput="df.q=this.value;render()">
+    <select onchange="df.person=this.value;render()"><option value="">상대 전체</option>${decPeople().map(o=>`<option ${df.person===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
+    <select onchange="df.type=this.value;render()"><option value="">유형 전체</option>${(DB.settings['기록 유형']||[]).map(s=>`<option ${df.type===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
     <select onchange="df.status=this.value;render()"><option value="">상태 전체</option>${(DB.settings['결정 상태']||[]).map(s=>`<option ${df.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
-    <span style="flex:1"></span><button class="btn" onclick="editDec(null)">+ 결정 기록</button></div>
-  <div class="card"><div class="tw"><table><thead><tr><th>날짜</th><th>프로젝트</th><th>이슈</th><th>결정 필요자</th><th>결정 내용 / 후속</th><th>마감</th><th>상태</th></tr></thead><tbody>
-  ${rows.map(d=>`<tr class="click" onclick="editDec('${d.id}')">
-    <td class="num">${esc(d.date||'-')}</td><td><b>${esc(pnameByCode(d.code))}</b></td>
-    <td class="mini">${nl(d.issue)}</td><td>${esc(d.decider||'-')}</td>
-    <td class="mini">${[d.decision,d.followup&&('→ '+d.followup)].filter(Boolean).map(nl).join('<br>')||'<span class="hint">-</span>'}</td>
-    <td class="num">${esc(d.due||'-')}</td>
-    <td><span class="b ${d.status==='결정완료'?'g':d.status==='보류'||d.status==='취소'?'gy':'a'}">${esc(d.status)}</span></td></tr>`).join('')
-    || '<tr><td colspan="7" class="empty">기록이 없습니다.</td></tr>'}
+    <span style="flex:1"></span><button class="btn" onclick="editDec(null)">+ 기록</button></div>
+  ${months.map(mk=>`<div class="card"><div class="hd"><h2>${esc(mk)}</h2><span class="hint">${byM[mk].length}건</span></div>
+  <div class="tw"><table><thead><tr><th>날짜</th><th>유형</th><th>프로젝트</th><th>상대</th><th>이슈 / 내가 말한 것</th><th>후속·마감</th><th>상태</th></tr></thead><tbody>
+  ${byM[mk].map(d=>`<tr class="click" onclick="editDec('${d.id}')">
+    <td class="num">${esc((d.date||'').slice(5)||'-')}</td>
+    <td>${decTypeBadge(d.type)||'<span class="hint">-</span>'}</td>
+    <td><b>${esc(pnameByCode(d.code)||'-')}</b></td><td>${esc(d.decider||'-')}</td>
+    <td class="mini">${[d.issue,d.decision&&('<b>→ '+esc(d.decision).replace(/\n/g,'<br>')+'</b>')].filter(Boolean).map((x,i)=>i===0?nl(x):x).join('<br>')||'<span class="hint">-</span>'}</td>
+    <td class="mini">${[d.followup&&nl(d.followup), d.due&&('<span class="num">'+esc(d.due)+'</span> '+ddayHtml(dday(d.due)))].filter(Boolean).join('<br>')||'<span class="hint">-</span>'}</td>
+    <td><span class="b ${d.status==='결정완료'?'g':d.status==='보류'||d.status==='취소'?'gy':'a'}">${esc(d.status)}</span></td></tr>`).join('')}
+  </tbody></table></div></div>`).join('') || '<div class="card"><div class="empty">기록이 없습니다. 📝 기록 모드에서 프로젝트를 훑으며 남겨보세요.</div></div>'}`;
+}
+
+/* 기록 모드: 프로젝트를 훑으며 지시·보고·결정을 그 자리에서 남긴다 */
+function vDecRec(){
+  let projs = DB.projects.filter(p=>!['완료','취소','중단'].includes(p.status));
+  projs=[...projs].sort((a,b)=>{
+    const ra=(a.status==='위험'?0:1)-(b.status==='위험'?0:1); if(ra) return ra;
+    const da=dday(a.due), db_=dday(b.due);
+    return (da===null?9999:da)-(db_===null?9999:db_); });
+  const types=DB.settings['기록 유형']||[];
+  const recent=code=>[...DB.decisions.filter(d=>d.code===code)].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,2);
+  return `${pageHead(`결정 기록 · 기록 모드`,`프로젝트를 위에서부터 훑으면서, 오늘 지시·보고·결정한 것을 오른쪽에 바로 남기세요`)}
+  <div class="filters">
+    <div class="seg"><button onclick="df.mode='list';render()">목록</button><button class="on">📝 기록 모드</button></div>
+    <span class="hint" style="align-self:center">저장하면 오늘 날짜로 기록됩니다 · 세부(선택지·마감)는 목록에서 행을 눌러 보완</span>
+  </div>
+  <div class="card"><div class="tw"><table><thead><tr>
+  <th style="min-width:170px">프로젝트</th><th>참고 (결정필요·리스크·최근 기록)</th><th style="min-width:280px;width:42%">오늘 남길 기록 ✍</th></tr></thead><tbody>
+  ${projs.map(p=>{
+    const ctx=[
+      p.decision&&('결정필요: '+p.decision), p.risk&&('⛔ '+p.risk),
+      ...recent(p.code).map(d=>`${d.date?d.date.slice(5)+' ':''}${d.type?'['+d.type+'] ':''}${d.decider?d.decider+' · ':''}${d.decision||d.issue}`)
+    ].filter(Boolean);
+    return `<tr>
+    <td><b>${esc(pname(p))}</b><div class="hint">${esc(p.owner||'-')} ${p.due?ddayHtml(dday(p.due)):''}</div></td>
+    <td class="mini" style="color:var(--sub)">${ctx.map(nl).join('<br>')||'<span class="hint">-</span>'}</td>
+    <td><div style="display:flex;gap:6px;margin-bottom:6px">
+      <select id="rt_${esc(p.code)}" style="padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:#FAFBFA;font-size:12.5px">
+        ${types.map(t=>`<option>${esc(t)}</option>`).join('')}</select>
+      <input id="rp_${esc(p.code)}" placeholder="상대 (대표님, 팀원 이름…)" style="flex:1;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:#FAFBFA;font-size:12.5px">
+     </div>
+     <div style="display:flex;gap:6px;align-items:flex-start">
+      <textarea id="rc_${esc(p.code)}" placeholder="뭐라고 말했나 / 무엇을 정했나…"
+       style="flex:1;min-height:48px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#FFFDF5;font-size:13px;resize:vertical"></textarea>
+      <button class="btn sm" style="margin-top:2px" onclick="recDec('${esc(p.code)}')">저장</button>
+     </div></td></tr>`; }).join('')}
   </tbody></table></div></div>`;
+}
+function recDec(code){
+  const g=id=>document.getElementById(id);
+  const type=g('rt_'+code)?.value||'', person=(g('rp_'+code)?.value||'').trim(), body=(g('rc_'+code)?.value||'').trim();
+  if(!body){ toast('내용을 입력하세요'); return; }
+  DB.decisions.push({id:uid('d'),date:new Date().toISOString().slice(0,10),code,type,issue:'',decider:person,
+    options:'',decision:body,followup:'',due:'',status:type==='결정'||type==='합의'?'결정완료':'결정대기'});
+  g('rc_'+code).value=''; if(g('rp_'+code)) g('rp_'+code).value='';
+  g('rc_'+code).style.background='#FAFBFA';
+  save(); toast('기록됨 · '+pnameByCode(code));
 }
 function editDec(id){
   const isNew=!id;
-  const d=isNew?{id:uid('d'),date:new Date().toISOString().slice(0,10),code:'',issue:'',decider:'',options:'',decision:'',followup:'',due:'',status:'결정대기'}:DB.decisions.find(x=>x.id===id);
-  openModal(isNew?'새 결정 기록':'결정 기록 편집', `<div class="fgrid">
+  const d=isNew?{id:uid('d'),date:new Date().toISOString().slice(0,10),code:'',type:'',issue:'',decider:'',options:'',decision:'',followup:'',due:'',status:'결정대기'}:DB.decisions.find(x=>x.id===id);
+  openModal(isNew?'새 기록':'기록 편집', `<div class="fgrid">
   <div class="f"><label>날짜</label><input id="f_date" type="date" value="${esc(d.date)}"></div>
   <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),d.code)}</select></div>
-  <div class="f full"><label>이슈</label><textarea id="f_issue">${esc(d.issue)}</textarea></div>
-  <div class="f"><label>결정 필요자</label><input id="f_dcd" value="${esc(d.decider)}"></div>
-  <div class="f"><label>상태</label><select id="f_st">${opt(DB.settings['결정 상태']||[],d.status)}</select></div>
+  <div class="f"><label>유형</label><select id="f_type">${opt(DB.settings['기록 유형']||[],d.type)}</select></div>
+  <div class="f"><label>상대 (지시받은/보고받은 사람)</label><input id="f_dcd" value="${esc(d.decider)}"></div>
+  <div class="f full"><label>이슈 (배경)</label><textarea id="f_issue">${esc(d.issue)}</textarea></div>
   <div class="f full"><label>선택지</label><textarea id="f_opt">${esc(d.options)}</textarea></div>
-  <div class="f full"><label>결정 내용</label><textarea id="f_dec">${esc(d.decision)}</textarea></div>
+  <div class="f full"><label>내가 말한 것 / 결정 내용</label><textarea id="f_dec">${esc(d.decision)}</textarea></div>
   <div class="f full"><label>후속 액션</label><input id="f_fu" value="${esc(d.followup)}"></div>
   <div class="f"><label>마감</label><input id="f_due" type="date" value="${esc(d.due)}"></div>
+  <div class="f"><label>상태</label><select id="f_st">${opt(DB.settings['결정 상태']||[],d.status)}</select></div>
   </div>`, ()=>{
     const g=id=>document.getElementById(id).value;
-    Object.assign(d,{date:g('f_date'),code:g('f_code'),issue:g('f_issue'),decider:g('f_dcd'),status:g('f_st'),
+    Object.assign(d,{date:g('f_date'),code:g('f_code'),type:g('f_type'),issue:g('f_issue'),decider:g('f_dcd'),status:g('f_st'),
       options:g('f_opt'),decision:g('f_dec'),followup:g('f_fu'),due:g('f_due')});
     if(isNew) DB.decisions.push(d); save(); render(); return true;
   }, isNew?null:()=>{ DB.decisions=DB.decisions.filter(x=>x.id!==id); save(); render(); closeModal(); });
@@ -635,7 +719,7 @@ function editDec(id){
 function vFin(){
   const rows=DB.finance.filter(f=>projOf(f.code));
   const tt=rows.reduce((a,f)=>{ const c=finCalc(f); a.total+=(+f.total||0); a.paid+=c.paid; a.due+=c.due; return a; },{total:0,paid:0,due:0});
-  return `<h1 class="page">계약 / 입금 관리</h1><p class="pagesub">계약·입금은 하위 프로젝트 기준 · 입금합계와 미수금은 자동 계산</p>
+  return `${pageHead(`계약 / 입금 관리`,`계약·입금은 하위 프로젝트 기준 · 입금합계와 미수금은 자동 계산`)}
   <div class="kpi">
     <div class="k"><div class="l">총 계약금</div><div class="v num">${wonS(tt.total)}</div></div>
     <div class="k gr"><div class="l">입금 합계</div><div class="v num">${wonS(tt.paid)}</div></div>
@@ -682,7 +766,7 @@ function vPpl(){
   const over=stats.filter(s=>s.c.state==='과부하').length, free=stats.filter(s=>s.c.state==='여유').length;
   const avg=stats.length?stats.reduce((a,s)=>a+s.c.total,0)/stats.length:0;
   const ccSum=cc=>DB.people.reduce((a,p)=>a+(p.alloc[cc]||0),0);
-  return `<h1 class="page">인력분배</h1><p class="pagesub">원가센터 기준 투입률 · 100% = 1.0 · 셀을 바로 수정할 수 있습니다</p>
+  return `${pageHead(`인력분배`,`원가센터 기준 투입률 · 100% = 1.0 · 셀을 바로 수정할 수 있습니다`)}
   <div class="kpi">
    <div class="k"><div class="l">총 인원</div><div class="v num">${DB.people.length}</div></div>
    <div class="k ${over?'rd':''}"><div class="l">과부하</div><div class="v num">${over}</div></div>
@@ -726,7 +810,7 @@ function vExp(){
   const rows=DB.expenses.filter(e=>{ const p=projOf(e.code); return !ef.cc||(p&&p.cc===ef.cc); });
   const total=rows.reduce((a,e)=>a+(+e.amount||0),0);
   const byCC={}; DB.expenses.forEach(e=>{ const p=projOf(e.code); const cc=p?p.cc:'(미연결)'; byCC[cc]=(byCC[cc]||0)+(+e.amount||0); });
-  return `<h1 class="page">실제 지출 상세</h1><p class="pagesub">하위 프로젝트 코드로 입력해도 원가센터로 자동 합산됩니다</p>
+  return `${pageHead(`지출 장부`,`하위 프로젝트 코드로 입력해도 원가센터로 자동 합산됩니다`)}
   <div class="filters">
     <select onchange="ef.cc=this.value;render()"><option value="">원가센터 전체</option>${allCC().map(c=>`<option ${ef.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
     <span style="flex:1"></span><button class="btn" onclick="editExp(null)">+ 지출</button></div>
@@ -768,8 +852,7 @@ function vProf(){
   const rows=allCC().map(ccCalc).filter(c=>c.count>0||c.labor>0||c.extBudget>0);
   const tt=rows.reduce((a,c)=>{ a.rev+=c.revenue; a.bud+=c.totalBudget; a.margin+=c.estMargin; a.ext+=c.actExt; return a; },{rev:0,bud:0,margin:0,ext:0});
   const nProb=rows.filter(c=>['주의','저마진','적자'].includes(c.state)).length;
-  return `<h1 class="page">수익성 계산실 · 원가센터 기준</h1>
-  <p class="pagesub">인건비 = Σ(투입률 × 월 단가) × 투입개월 · 예비비 = 외부지출예산 × 예비비율 · 행을 누르면 입력값 편집</p>
+  return `${pageHead(`수익성 결론 · 원가센터 기준`,`인건비 = Σ(투입률 × 월 단가) × 투입개월 · 예비비 = 외부지출예산 × 예비비율 · 행을 누르면 입력값 편집`)}
   <div class="kpi">
    <div class="k"><div class="l">예상매출 합계</div><div class="v num">${wonS(tt.rev)}</div></div>
    <div class="k"><div class="l">총지출예산</div><div class="v num">${wonS(tt.bud)}</div></div>
@@ -792,7 +875,7 @@ function vProf(){
    <td>${profBadge(c.state)}</td><td class="mini">${esc(c.pi.purpose||'-')}</td></tr>`).join('')}
   </tbody></table></div></div>
   <p class="hint">계획마진 = 매출−(예산+예비비+인건비) · 전망마진 = 매출−인건비−(라인별 max(예산,확정)) · 확정마진 = 매출−인건비−확정지출<br>
-  외부지출예산은 <b>예산·집행</b> 탭의 예산 라인 합계가 자동 연결됩니다 (라인이 없으면 이 화면의 직접입력값 사용).<br>
+  외부지출예산은 <b>예산 대비 지출</b> 탭의 예산 라인 합계가 자동 연결됩니다 (라인이 없으면 이 화면의 직접입력값 사용).<br>
   상태 기준: 매출 0 → 매출미입력 · 마진율 &lt;0 → 적자 · &lt;${pct(DB.thresholds.low)} → 저마진 · &lt;${pct(DB.thresholds.warn)} → 주의 (설정에서 변경)</p>`;
 }
 function editProf(cc){
@@ -800,7 +883,7 @@ function editProf(cc){
   openModal('수익성 입력 · '+esc(cc), `<div class="fgrid">
   <div class="f"><label>투입개월</label><input id="f_m" type="number" step="0.5" value="${pi.months}"></div>
   <div class="f"><label>외부지출예산 (원)</label>${budgetsOf(cc).length
-    ?`<input id="f_x" type="number" value="${ccExtBudget(cc)}" disabled title="예산·집행 탭의 라인 합계"><span class="hint">예산·집행 탭 라인 합계 (자동)</span>`
+    ?`<input id="f_x" type="number" value="${ccExtBudget(cc)}" disabled title="예산 대비 지출 탭의 라인 합계"><span class="hint">예산 대비 지출 탭 라인 합계 (자동)</span>`
     :`<input id="f_x" type="number" value="${pi.extBudget||''}">`}</div>
   <div class="f"><label>예비비율 (예: 0.15)</label><input id="f_r" type="number" step="0.01" value="${pi.reserveRate}"></div>
   <div class="f"><label>전략목적</label><select id="f_p">${opt(DB.settings['전략목적']||[],pi.purpose)}</select></div>
@@ -826,8 +909,7 @@ function vBud(){
   const shown = bf.cc ? ccs.filter(c=>c.cc===bf.cc) : ccs.filter(c=>c.lines.length);
   const tt = ccs.reduce((a,c)=>{ c.lines.forEach(l=>{ a.bud+=l.budget; a.com+=l.committed; a.paid+=l.paid; }); return a; },{bud:0,com:0,paid:0});
   const overN = ccs.reduce((a,c)=>a+c.overLines,0);
-  return `<h1 class="page">예산 · 집행</h1>
-  <p class="pagesub">예산은 원가센터 × 지출구분 라인으로 잡습니다 · 확정액 = 지출 탭에 입력된 전체(미지급 포함), 지급액 = 결제상태 '지급완료'분</p>
+  return `${pageHead(`예산 대비 지출`,`예산은 원가센터 × 지출구분 라인으로 잡습니다 · 확정액 = 지출 장부에 입력된 전체(미지급 포함), 지급액 = 결제상태 '지급완료'분`)}
   <div class="kpi">
    <div class="k"><div class="l">총 예산</div><div class="v num">${wonS(tt.bud)}</div></div>
    <div class="k"><div class="l">확정액</div><div class="v num">${wonS(tt.com)}</div></div>
@@ -889,7 +971,7 @@ function editBudKind(cc, kind){
 /* ── 설정·백업 ── */
 function vSet(){
   const snaps = (()=>{ try{ return JSON.parse(localStorage.getItem(SNAP_KEY)||'[]'); }catch(e){ return []; } })();
-  return `<h1 class="page">설정 · 백업</h1><p class="pagesub">드롭다운 항목, 판정 기준, 데이터 백업을 관리합니다</p>
+  return `${pageHead(`설정 · 백업`,`드롭다운 항목, 판정 기준, 데이터 백업을 관리합니다`)}
   <div class="card"><div class="hd"><h2>데이터 백업</h2></div><div class="bd">
    <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn" onclick="exportJSON()">JSON 내보내기</button>
@@ -912,14 +994,14 @@ function vSet(){
   </div></div></div>
   <div class="card"><div class="hd"><h2>연결맵 · 어디에 무엇을 입력하나</h2></div><div class="tw"><table>
   <thead><tr><th>화면</th><th>내가 입력하는 것</th><th>자동 연결되는 것</th></tr></thead><tbody>
-  <tr><td><b>대시보드</b></td><td>입력 없음</td><td>마스터/수익성 요약 — 회의 때 보는 화면</td></tr>
+  <tr><td><b>오늘 현황</b></td><td>입력 없음</td><td>마스터/수익성 요약 — 회의 때 보는 화면</td></tr>
   <tr><td><b>프로젝트</b></td><td>기본정보, 원가센터, 액션, 예상매출</td><td>D-Day, 수익성상태, 마진율</td></tr>
   <tr><td><b>인력분배</b></td><td>사람별 원가센터 투입률, 월 단가</td><td>총할당률/잔여/상태, 수익성 내부인건비</td></tr>
-  <tr><td><b>예산·집행</b></td><td>원가센터 × 지출구분별 예산 라인</td><td>확정액/지급액/집행률/잔여, 수익성 외부지출예산</td></tr>
-  <tr><td><b>지출</b></td><td>실제 지출내역 (하위 코드 기준, 결제상태 포함)</td><td>프로젝트명/원가센터/예산 라인 자동 합산</td></tr>
-  <tr><td><b>수익성</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
-  <tr><td><b>재무</b></td><td>클라이언트, 계약금, 선금/중도금/잔금</td><td>입금합계, 미수금</td></tr>
-  <tr><td><b>결정로그</b></td><td>중단/취소 사유, 결정사항</td><td>프로젝트명 자동 연결 — 삭제 대신 기록</td></tr>
+  <tr><td><b>예산 대비 지출</b></td><td>원가센터 × 지출구분별 예산 라인</td><td>확정액/지급액/집행률/잔여, 수익성 외부지출예산</td></tr>
+  <tr><td><b>지출 장부</b></td><td>실제 지출내역 (하위 코드 기준, 결제상태 포함)</td><td>프로젝트명/원가센터/예산 라인 자동 합산</td></tr>
+  <tr><td><b>수익성 결론</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
+  <tr><td><b>계약·입금</b></td><td>클라이언트, 계약금, 선금/중도금/잔금</td><td>입금합계, 미수금</td></tr>
+  <tr><td><b>결정 기록</b></td><td>중단/취소 사유, 결정사항</td><td>프로젝트명 자동 연결 — 삭제 대신 기록</td></tr>
   </tbody></table></div></div>`;
 }
 function exportJSON(){
