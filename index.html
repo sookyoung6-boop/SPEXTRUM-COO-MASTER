@@ -234,6 +234,7 @@ function migrate(){
   DB.profitInputs = DB.profitInputs || [];
   DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
   DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
+  DB.settings['인력 매트릭스 원가센터'] = DB.settings['인력 매트릭스 원가센터'] || (DB.ccList||[]).slice(0,13);
 }
 migrate();
 // daily snapshot on load (max 10)
@@ -771,7 +772,9 @@ function vDec(){
   // 월별 그룹 (아카이브 느낌)
   const byM={};
   rows.forEach(d=>{ const k=d.date?d.date.slice(0,7):'날짜 미기재'; (byM[k]=byM[k]||[]).push(d); });
-  const months=Object.keys(byM).sort().reverse();
+  const months=Object.keys(byM).sort((a,b)=>{
+    if(a==='날짜 미기재') return 1; if(b==='날짜 미기재') return -1;
+    return b.localeCompare(a); });
   return `${pageHead(`결정 기록`,`누구에게 무엇을 지시·보고·결정했는지 남기는 아카이브 · 중단/취소 사유도 삭제 대신 여기에`)}
   <div class="filters">
     <div class="seg"><button class="on">목록</button><button onclick="df.mode='rec';render()">📝 기록 모드</button></div>
@@ -781,11 +784,11 @@ function vDec(){
     <select onchange="df.status=this.value;render()"><option value="">상태 전체</option>${(DB.settings['결정 상태']||[]).map(s=>`<option ${df.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
     <span style="flex:1"></span><button class="btn" onclick="editDec(null)">+ 기록</button></div>
   ${months.map(mk=>`<div class="card"><div class="hd"><h2>${esc(mk)}</h2><span class="hint">${byM[mk].length}건</span></div>
-  <div class="tw"><table><thead><tr><th>날짜</th><th>유형</th><th>프로젝트</th><th>상대</th><th>이슈 / 내가 말한 것</th><th>후속·마감</th><th>상태</th></tr></thead><tbody>
+  <div class="tw"><table><thead><tr><th style="min-width:48px">날짜</th><th>유형</th><th style="min-width:130px">프로젝트</th><th style="min-width:64px">상대</th><th style="min-width:230px">이슈 / 내가 말한 것</th><th style="min-width:120px">후속·마감</th><th>상태</th></tr></thead><tbody>
   ${byM[mk].map(d=>`<tr class="click" onclick="editDec('${d.id}')">
     <td class="num">${esc((d.date||'').slice(5)||'-')}</td>
     <td>${decTypeBadge(d.type)||'<span class="hint">-</span>'}</td>
-    <td><b>${esc(pnameByCode(d.code)||'-')}</b></td><td>${esc(d.decider||'-')}</td>
+    <td><b>${esc(pnameByCode(d.code)||'-')}</b></td><td style="white-space:nowrap">${esc(d.decider||'-')}</td>
     <td class="mini">${[d.issue,d.decision&&('<b>→ '+esc(d.decision).replace(/\n/g,'<br>')+'</b>')].filter(Boolean).map((x,i)=>i===0?nl(x):x).join('<br>')||'<span class="hint">-</span>'}</td>
     <td class="mini">${[d.followup&&nl(d.followup), d.due&&('<span class="num">'+esc(d.due)+'</span> '+ddayHtml(dday(d.due)))].filter(Boolean).join('<br>')||'<span class="hint">-</span>'}</td>
     <td><span class="b ${d.status==='결정완료'?'g':d.status==='보류'||d.status==='취소'?'gy':'a'}">${esc(d.status)}</span></td></tr>`).join('')}
@@ -906,7 +909,7 @@ function editFin(code){
 /* ── 인력분배 ── */
 let pplTab='alloc';
 function vPpl(){
-  const ccs=DB.ccList.slice(0,13); // 매트릭스 컬럼(원장과 동일)
+  const ccs=DB.settings['인력 매트릭스 원가센터']||DB.ccList.slice(0,13); // 매트릭스 컬럼 (설정에서 편집 가능)
   const stats=DB.people.map(p=>({p, c:personCalc(p)}));
   const over=stats.filter(s=>s.c.state==='과부하').length, free=stats.filter(s=>s.c.state==='여유').length;
   const avg=stats.length?stats.reduce((a,s)=>a+s.c.total,0)/stats.length:0;
@@ -922,11 +925,11 @@ function vPpl(){
    <button class="${pplTab==='alloc'?'on':''}" onclick="pplTab='alloc';render()">할당률 매트릭스</button>
    <button class="${pplTab==='roles'?'on':''}" onclick="pplTab='roles';render()">담당 업무</button>
    <button class="${pplTab==='rates'?'on':''}" onclick="pplTab='rates';render()">인건비 단가</button>
-  </div></div>
+  </div><span style="flex:1"></span><button class="btn" onclick="editPerson(null)">+ 인원</button></div>
   ${pplTab==='alloc'?`<div class="card"><div class="tw"><table class="mtx"><thead><tr><th class="name">이름</th>
    ${ccs.map(c=>`<th class="r">${esc(c).replace(' ','<br>')}</th>`).join('')}<th class="r">총할당</th><th class="r">잔여</th><th>상태</th></tr></thead><tbody>
    ${DB.people.map((p,pi)=>{ const c=personCalc(p);
-     return `<tr><td class="name">${esc(p.name)}<div class="hint">${esc(p.team||'')}</div></td>
+     return `<tr><td class="name click" style="cursor:pointer" onclick="editPerson(${pi})">${esc(p.name)} <span class="hint">✎</span><div class="hint">${esc(p.team||'')}</div></td>
      ${ccs.map(cc=>`<td class="r"><input class="num" type="number" step="0.05" min="0" value="${p.alloc[cc]||0}"
        onchange="setAlloc(${pi},'${esc(cc)}',this.value)"></td>`).join('')}
      <td class="r num"><b>${c.total.toFixed(2)}</b></td><td class="r num">${c.rest.toFixed(2)}</td>
@@ -936,7 +939,7 @@ function vPpl(){
    <tr><td class="name">투입 인원</td>${ccs.map(cc=>`<td class="r num">${DB.people.filter(p=>(p.alloc[cc]||0)>0).length}</td>`).join('')}<td colspan="3"></td></tr></tfoot>
    </table></div></div>`
   :pplTab==='roles'?`<div class="card"><div class="tw"><table><thead><tr><th>이름</th><th>팀</th><th>담당 프로젝트 · 업무</th></tr></thead><tbody>
-   ${DB.people.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="mini">${esc(p.team||'')}</td>
+   ${DB.people.map((p,pi)=>`<tr class="click" onclick="editPerson(${pi})"><td><b>${esc(p.name)}</b></td><td class="mini">${esc(p.team||'')}</td>
    <td class="mini">${Object.entries(p.roles).map(([cc,r])=>`<b>${esc(cc)}</b> ${nl(r)}`).join(' · ')||'<span class="hint">-</span>'}</td></tr>`).join('')}
    </tbody></table></div></div>`
   :`<div class="card"><div class="hd"><h2>인건비 단가</h2><span class="hint">월 인건비 원가 · 수익성 계산의 내부인건비에 반영</span></div>
@@ -948,6 +951,43 @@ function vPpl(){
    </tbody></table></div></div>`}`;
 }
 function setAlloc(pi,cc,v){ DB.people[pi].alloc[cc]=+v||0; save(); render(); }
+function rateRowOf(name){ return DB.rates.find(r=>r.name===name); }
+function editPerson(pi){
+  const isNew=pi===null;
+  const p=isNew?{name:'',team:'',roles:{},alloc:{},memo:''}:DB.people[pi];
+  const rr=isNew?null:rateRowOf(p.name);
+  const ccs=DB.settings['인력 매트릭스 원가센터']||DB.ccList.slice(0,13);
+  openModal(isNew?'새 인원 추가':'인원 편집 · '+esc(p.name), `<div class="fgrid">
+  <div class="f"><label>이름</label><input id="p_name" value="${esc(p.name)}"></div>
+  <div class="f"><label>팀</label><input id="p_team" value="${esc(p.team||'')}"></div>
+  <div class="f"><label>월 인건비 원가 (원)</label><input id="p_rate" type="number" value="${rr?rr.monthly||'':''}" placeholder="예: 2500000"></div>
+  <div class="f"><label>단가 적용</label><select id="p_apply"><option ${(!rr||rr.apply!=='미적용')?'selected':''}>적용</option><option ${rr&&rr.apply==='미적용'?'selected':''}>미적용</option></select></div>
+  <div class="f full"><label>기본 역할 / 비고</label><input id="p_role" value="${esc(rr?rr.role||'':'')}"></div>
+  </div>
+  <div class="subsec"><h4>원가센터별 담당 업무 (선택 입력)</h4><div class="fgrid">
+  ${ccs.map((cc,i)=>`<div class="f"><label>${esc(cc)}</label><input id="p_r${i}" value="${esc(p.roles[cc]||'')}"></div>`).join('')}
+  </div></div>
+  <p class="hint" style="margin-top:8px">단가를 입력하면 인건비 단가표에 자동 반영되고, 투입률은 저장 후 매트릭스에서 입력합니다.</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    const name=g('p_name').trim();
+    if(!name){ toast('이름을 입력하세요'); return false; }
+    if((isNew||name!==p.name) && DB.people.some(x=>x.name===name)){ toast('이미 있는 이름입니다'); return false; }
+    const oldName=p.name;
+    p.name=name; p.team=g('p_team').trim();
+    ccs.forEach((cc,i)=>{ const v=g('p_r'+i).trim(); if(v) p.roles[cc]=v; else delete p.roles[cc]; });
+    // 단가표 동기화 (이름 변경 시 함께 변경)
+    let r = rateRowOf(oldName)||rateRowOf(name);
+    if(!r){ r={name, role:'', monthly:0, apply:'적용', note:''}; DB.rates.push(r); }
+    r.name=name; r.monthly=+g('p_rate')||0; r.apply=g('p_apply'); r.role=g('p_role').trim();
+    if(isNew) DB.people.push(p);
+    save(); render(); return true;
+  }, isNew?null:()=>{
+    if(!confirm(p.name+' 님을 삭제할까요?\n투입률·단가가 함께 삭제되어 수익성 인건비 계산에서 빠집니다.\n(퇴사자는 삭제 대신 투입률을 0으로 두고 단가를 "미적용"으로 바꾸는 방법도 있습니다)')) return;
+    DB.rates=DB.rates.filter(r=>r.name!==p.name);
+    DB.people.splice(pi,1);
+    save(); render(); closeModal();
+  });
+}
 
 /* ── 지출 ── */
 let ef={cc:''};
