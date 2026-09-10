@@ -235,6 +235,21 @@ function migrate(){
   DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
   DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
   DB.settings['인력 매트릭스 원가센터'] = DB.settings['인력 매트릭스 원가센터'] || (DB.ccList||[]).slice(0,13);
+  DB.workdaysPerYear = DB.workdaysPerYear || 240;   // 연간 근무일수 (연봉 → 일단가)
+  DB.workdaysPerMonth = DB.workdaysPerMonth || 20;  // 월 근무일수 (과부하 판정 기준)
+  // v12: 월단가 → 연봉
+  (DB.rates||[]).forEach(r=>{ if(r.annual===undefined){ r.annual = (r.monthly||0)*12; delete r.monthly; } });
+  // v12: 투입률 매트릭스 → 참여일수 배정 (총액 보존: 비율×개월×20일)
+  if(!DB.assignments){
+    DB.assignments=[];
+    const mOf=cc=>{ const pi=(DB.profitInputs||[]).find(x=>x.cc===cc); return (pi&&pi.months)||1; };
+    (DB.people||[]).forEach(per=>{
+      Object.entries(per.alloc||{}).forEach(([cc,ratio])=>{
+        const d=Math.round((+ratio||0)*mOf(cc)*(DB.workdaysPerMonth||20));
+        if(d>0) DB.assignments.push({id:'a'+Math.random().toString(36).slice(2,9),person:per.name,cc,start:'',end:'',days:d,memo:'기존 투입률에서 이관'});
+      });
+    });
+  }
 }
 migrate();
 // daily snapshot on load (max 10)
@@ -381,7 +396,41 @@ function uid(pre){ return pre+Date.now().toString(36)+Math.random().toString(36)
 function opt(list, sel){ return ['<option value=""></option>'].concat(list.map(v=>`<option ${v===sel?'selected':''}>${esc(v)}</option>`)).join(''); }
 
 /* ═══════════ 수익성 엔진 (원가센터 기준) ═══════════ */
-function rateOf(name){ const r=DB.rates.find(x=>x.name===name && x.apply!=='미적용'); return r? (r.monthly||0):0; }
+function annualOf(name){ const r=DB.rates.find(x=>x.name===name && x.apply!=='미적용'); return r? (r.annual||0):0; }
+function dailyRateOf(name){ return annualOf(name)/(DB.workdaysPerYear||240); }
+function asgOf(cc){ return DB.assignments.filter(a=>a.cc===cc); }
+function asgOfPerson(name){ return DB.assignments.filter(a=>a.person===name); }
+/* 두 날짜 사이 평일 수 (공휴일 미반영) */
+function weekdaysBetween(s,e){
+  if(!s||!e) return 0;
+  const a=new Date(s+'T00:00:00'), b=new Date(e+'T00:00:00');
+  if(isNaN(a)||isNaN(b)||b<a) return 0;
+  let n=0; const d=new Date(a);
+  while(d<=b){ const w=d.getDay(); if(w!==0&&w!==6) n++; d.setDate(d.getDate()+1); }
+  return n;
+}
+/* 배정 1건을 월별로 분배 → {'2026-07':일수, …} · 기간 없으면 '미지정' */
+function spreadByMonth(a){
+  const out={};
+  const total=+a.days||0;
+  if(!a.start||!a.end){ out['미지정']=total; return out; }
+  const buckets={}; let sum=0;
+  const s=new Date(a.start+'T00:00:00'), e=new Date(a.end+'T00:00:00');
+  if(isNaN(s)||isNaN(e)||e<s){ out['미지정']=total; return out; }
+  const d=new Date(s);
+  while(d<=e){ const w=d.getDay();
+    if(w!==0&&w!==6){ const k=d.toISOString().slice(0,7); buckets[k]=(buckets[k]||0)+1; sum++; }
+    d.setDate(d.getDate()+1); }
+  if(!sum){ out['미지정']=total; return out; }
+  Object.entries(buckets).forEach(([k,v])=>{ out[k]=total*v/sum; });
+  return out;
+}
+function monthlyLoad(name){
+  const out={};
+  asgOfPerson(name).forEach(a=>{ const m=spreadByMonth(a);
+    Object.entries(m).forEach(([k,v])=>{ out[k]=(out[k]||0)+v; }); });
+  return out;
+}
 function profitInput(cc){
   let pi = DB.profitInputs.find(x=>x.cc===cc);
   if(!pi){ pi={cc, months:1, extBudget:0, reserveRate:0.1, purpose:'', memo:''}; DB.profitInputs.push(pi); }
@@ -408,7 +457,8 @@ function ccCalc(cc){
   const pi = profitInput(cc);
   const projs = DB.projects.filter(p=>p.cc===cc);
   const revenue = projs.reduce((a,p)=>a+(+p.revenue||0),0);
-  const labor = DB.people.reduce((a,per)=>a + (per.alloc[cc]||0)*rateOf(per.name), 0) * (pi.months||1);
+  const laborDays = asgOf(cc).reduce((a,x)=>a+(+x.days||0),0);
+  const labor = asgOf(cc).reduce((a,x)=>a + (+x.days||0)*dailyRateOf(x.person), 0);
   const extBudget = ccExtBudget(cc);
   const reserve = extBudget*(pi.reserveRate||0);
   const totalBudget = extBudget+reserve+labor;
@@ -433,7 +483,7 @@ function ccCalc(cc){
   else if(estRate<th.low) state='저마진';
   else if(estRate<th.warn) state='주의';
   else state='정상';
-  return {cc, pi, count:projs.length, revenue, labor, extBudget, reserve, totalBudget, estMargin, estRate,
+  return {cc, pi, count:projs.length, revenue, labor, laborDays, extBudget, reserve, totalBudget, estMargin, estRate,
     committed, paid, fcExt, fcMargin, fcRate, actExt, actCost, actMargin, actRate, lines, overLines, state};
 }
 function allCC(){
@@ -446,8 +496,21 @@ function projProf(p){ return p.cc && p.cc!=='-' ? ccCalc(p.cc) : null; }
 /* 재무 자동 */
 function finCalc(f){ const paid=(+f.adv||0)+(+f.mid||0)+(+f.bal||0); return {paid, due:(+f.total||0)-paid}; }
 /* 인력 자동 */
-function personCalc(per){ const t=Object.values(per.alloc).reduce((a,v)=>a+(+v||0),0);
-  return {total:t, rest:+(1-t).toFixed(2), state: t>1.001?'과부하':(t<0.9?'여유':'적정')}; }
+function personCalc(per){
+  const rows=asgOfPerson(per.name);
+  const days=rows.reduce((a,x)=>a+(+x.days||0),0);
+  const load=monthlyLoad(per.name);
+  const WD=DB.workdaysPerMonth||20;
+  const dated=Object.keys(load).filter(k=>k!=='미지정');
+  const over=dated.filter(k=>load[k]>WD*1.02);
+  const peak=dated.length?Math.max(...dated.map(k=>load[k])):0;
+  let state;
+  if(!dated.length) state='기간미입력';
+  else if(over.length) state='과부하';
+  else if(peak<WD*0.6) state='여유';
+  else state='적정';
+  return {days, load, over, peak, state, cost:days*dailyRateOf(per.name)};
+}
 
 /* ═══════════ navigation ═══════════ */
 const VIEWS=[
@@ -559,14 +622,14 @@ function vProj(){
     <span style="flex:1"></span><button class="btn" onclick="editProj(null)">+ 프로젝트</button>
   </div>
   <div class="card"><div class="tw"><table><thead><tr>
-  <th>코드</th><th>프로젝트</th><th>Owner</th><th>상태</th><th>단계</th><th>우선</th><th>마감</th><th>D-Day</th><th class="r">예상매출</th><th>계약</th><th>수익성</th></tr></thead><tbody>
+  <th>코드</th><th>프로젝트</th><th>Owner</th><th>상태</th><th>단계</th><th>우선</th><th>계약기간</th><th>D-Day</th><th class="r">예상매출</th><th>계약</th><th>수익성</th></tr></thead><tbody>
   ${rows.map(p=>{ const pr=projProf(p);
     return `<tr class="click" onclick="editProj('${p.code}')">
     <td class="num">${esc(p.code)}</td>
     <td><b>${esc(pname(p))}</b>${p.goal?`<div class="hint">${esc(p.goal)}</div>`:''}</td>
     <td>${esc(p.owner||'-')}</td><td>${statusBadge(p.status)}</td><td>${esc(p.stage||'-')}</td>
     <td>${p.pri?`<span class="pri ${esc(p.pri)}">${esc(p.pri)}</span>`:'-'}</td>
-    <td class="num">${esc(p.due||'-')}</td><td>${ddayHtml(dday(p.due))}</td>
+    <td class="num mini">${p.start?esc(p.start)+'<br>~ ':''}${esc(p.due||'-')}</td><td>${ddayHtml(dday(p.due))}</td>
     <td class="r num">${wonS(p.revenue)}</td><td class="mini">${esc(p.contract||'-')}</td>
     <td>${pr?profBadge(pr.state):'<span class="hint">-</span>'}</td></tr>`; }).join('')}
   </tbody></table></div></div>`;
@@ -585,7 +648,8 @@ function projForm(p){
   <div class="f"><label>상태</label><select id="f_status">${opt(S['상태']||[],p.status)}</select></div>
   <div class="f"><label>단계</label><select id="f_stage">${opt(S['단계']||[],p.stage)}</select></div>
   <div class="f"><label>우선순위</label><select id="f_pri">${opt(['A','B','C','D'],p.pri)}</select></div>
-  <div class="f"><label>최종 마감</label><input id="f_due" type="date" value="${esc(p.due)}"></div>
+  <div class="f"><label>계약 시작일</label><input id="f_start" type="date" value="${esc(p.start||'')}"></div>
+  <div class="f"><label>계약 마감일</label><input id="f_due" type="date" value="${esc(p.due)}"></div>
   <div class="f"><label>예상 매출 (원)</label><input id="f_rev" type="number" value="${p.revenue||''}"></div>
   <div class="f"><label>계약 상태</label><select id="f_contract">${opt(S['계약 상태']||[],p.contract)}</select></div>
   <div class="f full"><label>다음 달 마일스톤</label><input id="f_ms" value="${esc(p.milestone)}"></div>
@@ -598,10 +662,11 @@ function projForm(p){
 }
 function editProj(code){
   const isNew=!code;
-  const p = isNew ? {_new:true,code:'',cat:'',cc:'',parent:'',sub:'',type:'',goal:'',owner:'',status:'진행중',stage:'기획',pri:'B',due:'',milestone:'',action:'',decision:'',risk:'',revenue:0,contract:'',link:'',note:''} : projOf(code);
+  const p = isNew ? {_new:true,code:'',cat:'',cc:'',parent:'',sub:'',type:'',goal:'',owner:'',status:'진행중',stage:'기획',pri:'B',start:'',due:'',milestone:'',action:'',decision:'',risk:'',revenue:0,contract:'',link:'',note:''} : projOf(code);
   if(!p) return;
   const pr = !isNew ? projProf(p) : null;
   const rel = !isNew ? `
+   <div class="subsec"><h4>계약 기간</h4><p class="mini">${p.start||p.due?`${esc(p.start||'시작일 미입력')} ~ ${esc(p.due||'마감일 미입력')}${p.start&&p.due?` · 평일 ${weekdaysBetween(p.start,p.due)}일`:''}`:'<span class="hint">미입력</span>'}</p></div>
    <div class="subsec"><h4>이번 주 액션 (${DB.weekly.filter(w=>w.code===code).length})</h4>
    <ul class="mini">${DB.weekly.filter(w=>w.code===code).slice(-4).map(w=>`<li>${statusBadge(w.status)} ${nl(w.todo)||'<span class="hint">(내용 없음)</span>'}</li>`).join('')||'<li class="hint">없음</li>'}</ul>
    <div style="display:flex;gap:6px;margin-top:8px">
@@ -617,7 +682,7 @@ function editProj(code){
     if(isNew && projOf(nc)){ toast('이미 있는 코드입니다'); return false; }
     const t = isNew ? {} : p;
     Object.assign(t,{code:nc,cat:g('f_cat'),cc:g('f_cc'),parent:g('f_parent'),sub:g('f_sub'),type:g('f_type'),
-      goal:g('f_goal'),owner:g('f_owner'),status:g('f_status'),stage:g('f_stage'),pri:g('f_pri'),due:g('f_due'),
+      goal:g('f_goal'),owner:g('f_owner'),status:g('f_status'),stage:g('f_stage'),pri:g('f_pri'),start:g('f_start'),due:g('f_due'),
       milestone:g('f_ms'),action:document.getElementById('f_action').value,decision:document.getElementById('f_dec').value,
       risk:document.getElementById('f_risk').value,revenue:+g('f_rev')||0,contract:g('f_contract'),link:g('f_link'),note:g('f_note')});
     if(isNew){ delete t._new; DB.projects.push(t);
@@ -907,50 +972,126 @@ function editFin(code){
 }
 
 /* ── 인력분배 ── */
-let pplTab='alloc';
+let pplTab='asg';
+const wdM=()=>DB.workdaysPerMonth||20;
+function monthKeys(){
+  const set=new Set();
+  DB.assignments.forEach(a=>Object.keys(spreadByMonth(a)).forEach(k=>{ if(k!=='미지정') set.add(k); }));
+  return [...set].sort();
+}
 function vPpl(){
-  const ccs=DB.settings['인력 매트릭스 원가센터']||DB.ccList.slice(0,13); // 매트릭스 컬럼 (설정에서 편집 가능)
+  const ccs=DB.settings['인력 매트릭스 원가센터']||DB.ccList.slice(0,13);
   const stats=DB.people.map(p=>({p, c:personCalc(p)}));
-  const over=stats.filter(s=>s.c.state==='과부하').length, free=stats.filter(s=>s.c.state==='여유').length;
-  const avg=stats.length?stats.reduce((a,s)=>a+s.c.total,0)/stats.length:0;
-  const ccSum=cc=>DB.people.reduce((a,p)=>a+(p.alloc[cc]||0),0);
-  return `${pageHead(`인력분배`,`원가센터 기준 투입률 · 100% = 1.0 · 셀을 바로 수정할 수 있습니다`)}
+  const over=stats.filter(s=>s.c.state==='과부하').length;
+  const noPeriod=DB.assignments.filter(a=>!a.start||!a.end).length;
+  const totalDays=DB.assignments.reduce((a,x)=>a+(+x.days||0),0);
+  const totalCost=DB.assignments.reduce((a,x)=>a+(+x.days||0)*dailyRateOf(x.person),0);
+  const cellDays=(name,cc)=>DB.assignments.filter(a=>a.person===name&&a.cc===cc).reduce((a,x)=>a+(+x.days||0),0);
+  return `${pageHead(`인력분배`,`참여일수 기준 · 인건비 = 참여일수 × (연봉 ÷ 연간 근무일수) · 셀을 누르면 배정 내역이 열립니다`)}
   <div class="kpi">
    <div class="k"><div class="l">총 인원</div><div class="v num">${DB.people.length}</div></div>
-   <div class="k ${over?'rd':''}"><div class="l">과부하</div><div class="v num">${over}</div></div>
-   <div class="k ${free?'am':''}"><div class="l">여유</div><div class="v num">${free}</div></div>
-   <div class="k"><div class="l">평균 할당률</div><div class="v num">${pct(avg)}</div></div>
+   <div class="k ${over?'rd':''}"><div class="l">과부하 인원</div><div class="v num">${over}</div></div>
+   <div class="k"><div class="l">총 배정일수</div><div class="v num">${Math.round(totalDays)}일</div></div>
+   <div class="k"><div class="l">인건비 합계</div><div class="v num">${wonS(totalCost)}</div></div>
+   <div class="k ${noPeriod?'am':''}"><div class="l">기간 미입력 배정</div><div class="v num">${noPeriod}</div></div>
   </div>
   <div class="filters"><div class="seg">
-   <button class="${pplTab==='alloc'?'on':''}" onclick="pplTab='alloc';render()">할당률 매트릭스</button>
+   <button class="${pplTab==='asg'?'on':''}" onclick="pplTab='asg';render()">배정 매트릭스</button>
+   <button class="${pplTab==='month'?'on':''}" onclick="pplTab='month';render()">월별 부하</button>
+   <button class="${pplTab==='list'?'on':''}" onclick="pplTab='list';render()">배정 목록</button>
    <button class="${pplTab==='roles'?'on':''}" onclick="pplTab='roles';render()">담당 업무</button>
-   <button class="${pplTab==='rates'?'on':''}" onclick="pplTab='rates';render()">인건비 단가</button>
-  </div><span style="flex:1"></span><button class="btn" onclick="editPerson(null)">+ 인원</button></div>
-  ${pplTab==='alloc'?`<div class="card"><div class="tw"><table class="mtx"><thead><tr><th class="name">이름</th>
-   ${ccs.map(c=>`<th class="r">${esc(c).replace(' ','<br>')}</th>`).join('')}<th class="r">총할당</th><th class="r">잔여</th><th>상태</th></tr></thead><tbody>
+   <button class="${pplTab==='rates'?'on':''}" onclick="pplTab='rates';render()">연봉</button>
+  </div><span style="flex:1"></span>
+  <button class="btn ghost" onclick="editPerson(null)">+ 인원</button>
+  <button class="btn" onclick="editAsg(null)">+ 배정</button></div>
+  ${pplTab==='asg'?`<div class="card"><div class="tw"><table class="mtx"><thead><tr><th class="name">이름</th>
+   ${ccs.map(c=>`<th class="r">${esc(c).replace(' ','<br>')}</th>`).join('')}<th class="r">합계(일)</th><th class="r">인건비</th><th>상태</th></tr></thead><tbody>
    ${DB.people.map((p,pi)=>{ const c=personCalc(p);
-     return `<tr><td class="name click" style="cursor:pointer" onclick="editPerson(${pi})">${esc(p.name)} <span class="hint">✎</span><div class="hint">${esc(p.team||'')}</div></td>
-     ${ccs.map(cc=>`<td class="r"><input class="num" type="number" step="0.05" min="0" value="${p.alloc[cc]||0}"
-       onchange="setAlloc(${pi},'${esc(cc)}',this.value)"></td>`).join('')}
-     <td class="r num"><b>${c.total.toFixed(2)}</b></td><td class="r num">${c.rest.toFixed(2)}</td>
-     <td><span class="b ${c.state==='과부하'?'rd':c.state==='여유'?'a':'g'}">${c.state}</span></td></tr>`; }).join('')}
-   </tbody><tfoot><tr><td class="name">총 투입률</td>${ccs.map(cc=>`<td class="r num">${ccSum(cc).toFixed(2)}</td>`).join('')}
-   <td class="r num">${stats.reduce((a,s)=>a+s.c.total,0).toFixed(1)}</td><td colspan="2"></td></tr>
-   <tr><td class="name">투입 인원</td>${ccs.map(cc=>`<td class="r num">${DB.people.filter(p=>(p.alloc[cc]||0)>0).length}</td>`).join('')}<td colspan="3"></td></tr></tfoot>
-   </table></div></div>`
+     return `<tr><td class="name" style="cursor:pointer" onclick="editPerson(${pi})">${esc(p.name)} <span class="hint">✎</span><div class="hint">${esc(p.team||'')}</div></td>
+     ${ccs.map(cc=>{ const d=cellDays(p.name,cc);
+       return `<td class="r" style="cursor:pointer" onclick="cellAsg('${esc(p.name)}','${esc(cc)}')">
+       <span class="num" style="${d?'font-weight:700':'color:var(--sub);opacity:.5'}">${d?Math.round(d):'·'}</span></td>`; }).join('')}
+     <td class="r num"><b>${Math.round(c.days)}</b></td><td class="r num">${wonS(c.cost)}</td>
+     <td><span class="b ${c.state==='과부하'?'rd':c.state==='여유'?'a':c.state==='기간미입력'?'gy':'g'}">${c.state}</span></td></tr>`; }).join('')}
+   </tbody><tfoot><tr><td class="name">원가센터 합계(일)</td>
+   ${ccs.map(cc=>`<td class="r num">${Math.round(asgOf(cc).reduce((a,x)=>a+(+x.days||0),0))}</td>`).join('')}
+   <td class="r num">${Math.round(DB.assignments.reduce((a,x)=>a+(+x.days||0),0))}</td><td colspan="2"></td></tr>
+   <tr><td class="name">인건비</td>${ccs.map(cc=>`<td class="r num" style="font-size:11px">${wonS(ccCalc(cc).labor)}</td>`).join('')}<td colspan="3"></td></tr>
+   </tfoot></table></div></div>
+   <p class="hint">셀의 숫자는 참여일수입니다. 셀을 누르면 그 사람의 해당 원가센터 배정(기간·일수)을 추가·수정할 수 있습니다.</p>`
+  :pplTab==='month'?(()=>{ const mks=monthKeys(); const WD=wdM();
+    return `<div class="card"><div class="hd"><h2>월별 부하</h2><span class="hint">월 근무일수 ${WD}일 기준 · 초과 시 빨강 (설정에서 변경)</span></div>
+    <div class="tw"><table class="mtx"><thead><tr><th class="name">이름</th>${mks.map(m=>`<th class="r">${esc(m.slice(2))}</th>`).join('')}<th class="r">미지정</th></tr></thead><tbody>
+    ${DB.people.map(p=>{ const load=monthlyLoad(p.name);
+      return `<tr><td class="name">${esc(p.name)}</td>
+      ${mks.map(m=>{ const v=load[m]||0; const o=v>WD*1.02;
+        return `<td class="r num" style="${o?'color:var(--danger);font-weight:800;background:var(--danger-bg)':(v?'':'color:var(--sub);opacity:.4')}">${v?v.toFixed(0):'·'}</td>`; }).join('')}
+      <td class="r num" style="color:var(--sub)">${load['미지정']?load['미지정'].toFixed(0):'·'}</td></tr>`; }).join('')}
+    </tbody><tfoot><tr><td class="name">월 합계</td>
+    ${mks.map(m=>`<td class="r num">${DB.people.reduce((a,p)=>a+(monthlyLoad(p.name)[m]||0),0).toFixed(0)}</td>`).join('')}<td></td></tr></tfoot>
+    </table></div></div>
+    ${mks.length?'':'<div class="card"><div class="empty">기간이 입력된 배정이 없습니다. 배정에 시작일·종료일을 넣으면 월별 부하가 계산됩니다.</div></div>'}`; })()
+  :pplTab==='list'?`<div class="card"><div class="tw"><table><thead><tr><th>이름</th><th>원가센터</th><th>기간</th><th class="r">참여일수</th><th class="r">인건비</th><th>메모</th></tr></thead><tbody>
+   ${[...DB.assignments].sort((a,b)=>(a.person||'').localeCompare(b.person)||(a.start||'').localeCompare(b.start)).map(a=>
+   `<tr class="click" onclick="editAsg('${a.id}')"><td><b>${esc(a.person)}</b></td><td>${esc(a.cc)}</td>
+   <td class="num mini">${a.start&&a.end?esc(a.start)+' ~ '+esc(a.end):'<span class="b a">기간 미입력</span>'}</td>
+   <td class="r num"><b>${Math.round(a.days||0)}</b></td><td class="r num">${wonS((+a.days||0)*dailyRateOf(a.person))}</td>
+   <td class="mini">${esc(a.memo||'')}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">배정이 없습니다.</td></tr>'}
+   </tbody></table></div></div>`
   :pplTab==='roles'?`<div class="card"><div class="tw"><table><thead><tr><th>이름</th><th>팀</th><th>담당 프로젝트 · 업무</th></tr></thead><tbody>
    ${DB.people.map((p,pi)=>`<tr class="click" onclick="editPerson(${pi})"><td><b>${esc(p.name)}</b></td><td class="mini">${esc(p.team||'')}</td>
    <td class="mini">${Object.entries(p.roles).map(([cc,r])=>`<b>${esc(cc)}</b> ${nl(r)}`).join(' · ')||'<span class="hint">-</span>'}</td></tr>`).join('')}
    </tbody></table></div></div>`
-  :`<div class="card"><div class="hd"><h2>인건비 단가</h2><span class="hint">월 인건비 원가 · 수익성 계산의 내부인건비에 반영</span></div>
-   <div class="tw"><table><thead><tr><th>이름</th><th>기본 역할</th><th class="r">월 인건비 원가</th><th>적용</th><th>비고</th></tr></thead><tbody>
+  :`<div class="card"><div class="hd"><h2>연봉 · 일단가</h2><span class="hint">일단가 = 연봉 ÷ ${DB.workdaysPerYear||240}일 (설정에서 변경)</span></div>
+   <div class="tw"><table><thead><tr><th>이름</th><th>기본 역할</th><th class="r">연봉</th><th class="r">일단가</th><th>적용</th><th>비고</th></tr></thead><tbody>
    ${DB.rates.map((r,i)=>`<tr><td><b>${esc(r.name)}</b></td><td class="mini">${esc(r.role||'')}</td>
-   <td class="r"><input class="num" type="number" style="width:110px;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:6px" value="${r.monthly||0}" onchange="DB.rates[${i}].monthly=+this.value||0;save();render()"></td>
+   <td class="r"><input class="num" type="number" step="100000" style="width:130px;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:6px" value="${r.annual||0}" onchange="DB.rates[${i}].annual=+this.value||0;save();render()"></td>
+   <td class="r num">${r.apply==='미적용'?'<span class="hint">미적용</span>':won(Math.round((r.annual||0)/(DB.workdaysPerYear||240)))}</td>
    <td><select onchange="DB.rates[${i}].apply=this.value;save();render()" style="padding:4px;border:1px solid var(--line);border-radius:6px"><option ${r.apply!=='미적용'?'selected':''}>적용</option><option ${r.apply==='미적용'?'selected':''}>미적용</option></select></td>
-   <td class="mini">${r.monthly?'':'<span class="b a">단가 입력 필요</span>'} ${esc(r.note||'')}</td></tr>`).join('')}
-   </tbody></table></div></div>`}`;
+   <td class="mini">${r.annual?'':'<span class="b a">연봉 입력 필요</span>'} ${esc(r.note||'')}</td></tr>`).join('')}
+   </tbody></table></div></div>
+   <p class="hint">연봉에 4대보험·퇴직금 등 회사 부담분을 포함할지는 정책에 따라 다릅니다. 포함하려면 실제 연봉의 약 1.2배를 넣으세요.</p>`}`;
 }
-function setAlloc(pi,cc,v){ DB.people[pi].alloc[cc]=+v||0; save(); render(); }
+function cellAsg(person, cc){
+  const rows=DB.assignments.filter(a=>a.person===person&&a.cc===cc);
+  if(rows.length===1) return editAsg(rows[0].id);
+  openModal(esc(person)+' · '+esc(cc), `<ul class="mini">
+  ${rows.map(a=>`<li>${a.start&&a.end?esc(a.start)+' ~ '+esc(a.end):'<span class="hint">기간 미입력</span>'}
+   · <b>${Math.round(a.days||0)}일</b> ${esc(a.memo||'')}
+   <button class="btn ghost sm" style="margin-left:8px" onclick="editAsg('${a.id}')">편집</button></li>`).join('')||'<li class="hint">배정 없음</li>'}</ul>
+  <div class="macts"><button class="btn" onclick="editAsg(null,'${esc(person)}','${esc(cc)}')">+ 이 조합에 배정 추가</button></div>`, null);
+}
+function editAsg(id, person, cc){
+  const isNew=!id;
+  const a=isNew?{id:uid('a'),person:person||'',cc:cc||'',start:'',end:'',days:0,memo:''}:DB.assignments.find(x=>x.id===id);
+  if(!a) return;
+  openModal(isNew?'새 배정':'배정 편집', `<div class="fgrid">
+  <div class="f"><label>이름</label><select id="a_p">${opt(DB.people.map(x=>x.name),a.person)}</select></div>
+  <div class="f"><label>원가센터</label><select id="a_cc">${opt(allCC(),a.cc)}</select></div>
+  <div class="f"><label>시작일</label><input id="a_s" type="date" value="${esc(a.start)}" onchange="suggestDays()"></div>
+  <div class="f"><label>종료일</label><input id="a_e" type="date" value="${esc(a.end)}" onchange="suggestDays()"></div>
+  <div class="f"><label>참여일수 (실제 투입일)</label><input id="a_d" type="number" step="0.5" value="${a.days||''}"></div>
+  <div class="f"><label>메모</label><input id="a_m" value="${esc(a.memo)}"></div>
+  </div>
+  <p class="hint" style="margin-top:8px" id="a_hint">기간을 넣으면 그 사이 평일 수를 알려줍니다. 전담이 아니면 실제 투입일만 적으세요 (예: 3개월 중 절반만 투입 → 30일).</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    if(!g('a_p')||!g('a_cc')){ toast('이름과 원가센터를 선택하세요'); return false; }
+    const s=g('a_s'), e=g('a_e');
+    if(s&&e&&e<s){ toast('종료일이 시작일보다 빠릅니다'); return false; }
+    Object.assign(a,{person:g('a_p'),cc:g('a_cc'),start:s,end:e,days:+g('a_d')||0,memo:g('a_m')});
+    if(isNew) DB.assignments.push(a);
+    save(); render(); return true;
+  }, isNew?null:()=>{ DB.assignments=DB.assignments.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+function suggestDays(){
+  const s=document.getElementById('a_s')?.value, e=document.getElementById('a_e')?.value;
+  const h=document.getElementById('a_hint'), d=document.getElementById('a_d');
+  if(!h||!s||!e) return;
+  const wd=weekdaysBetween(s,e);
+  h.innerHTML=`이 기간의 평일은 <b>${wd}일</b>입니다. 전담이면 그대로, 절반 투입이면 ${Math.round(wd/2)}일 식으로 적으세요.
+   <button class="btn ghost sm" style="margin-left:6px" onclick="document.getElementById('a_d').value=${wd}">${wd}일 넣기</button>`;
+  if(d&&!d.value) d.value=wd;
+}
 function rateRowOf(name){ return DB.rates.find(r=>r.name===name); }
 function editPerson(pi){
   const isNew=pi===null;
@@ -960,14 +1101,14 @@ function editPerson(pi){
   openModal(isNew?'새 인원 추가':'인원 편집 · '+esc(p.name), `<div class="fgrid">
   <div class="f"><label>이름</label><input id="p_name" value="${esc(p.name)}"></div>
   <div class="f"><label>팀</label><input id="p_team" value="${esc(p.team||'')}"></div>
-  <div class="f"><label>월 인건비 원가 (원)</label><input id="p_rate" type="number" value="${rr?rr.monthly||'':''}" placeholder="예: 2500000"></div>
+  <div class="f"><label>연봉 (원)</label><input id="p_rate" type="number" step="100000" value="${rr?rr.annual||'':''}" placeholder="예: 36000000"></div>
   <div class="f"><label>단가 적용</label><select id="p_apply"><option ${(!rr||rr.apply!=='미적용')?'selected':''}>적용</option><option ${rr&&rr.apply==='미적용'?'selected':''}>미적용</option></select></div>
   <div class="f full"><label>기본 역할 / 비고</label><input id="p_role" value="${esc(rr?rr.role||'':'')}"></div>
   </div>
   <div class="subsec"><h4>원가센터별 담당 업무 (선택 입력)</h4><div class="fgrid">
   ${ccs.map((cc,i)=>`<div class="f"><label>${esc(cc)}</label><input id="p_r${i}" value="${esc(p.roles[cc]||'')}"></div>`).join('')}
   </div></div>
-  <p class="hint" style="margin-top:8px">단가를 입력하면 인건비 단가표에 자동 반영되고, 투입률은 저장 후 매트릭스에서 입력합니다.</p>`, ()=>{
+  <p class="hint" style="margin-top:8px">연봉을 넣으면 일단가(연봉÷${DB.workdaysPerYear||240}일)가 자동 계산됩니다. 참여일수는 저장 후 <b>+ 배정</b>에서 입력하세요.</p>`, ()=>{
     const g=id=>document.getElementById(id).value;
     const name=g('p_name').trim();
     if(!name){ toast('이름을 입력하세요'); return false; }
@@ -975,19 +1116,21 @@ function editPerson(pi){
     const oldName=p.name;
     p.name=name; p.team=g('p_team').trim();
     ccs.forEach((cc,i)=>{ const v=g('p_r'+i).trim(); if(v) p.roles[cc]=v; else delete p.roles[cc]; });
-    // 단가표 동기화 (이름 변경 시 함께 변경)
     let r = rateRowOf(oldName)||rateRowOf(name);
-    if(!r){ r={name, role:'', monthly:0, apply:'적용', note:''}; DB.rates.push(r); }
-    r.name=name; r.monthly=+g('p_rate')||0; r.apply=g('p_apply'); r.role=g('p_role').trim();
+    if(!r){ r={name, role:'', annual:0, apply:'적용', note:''}; DB.rates.push(r); }
+    r.name=name; r.annual=+g('p_rate')||0; r.apply=g('p_apply'); r.role=g('p_role').trim();
+    if(oldName && oldName!==name) DB.assignments.forEach(a=>{ if(a.person===oldName) a.person=name; });
     if(isNew) DB.people.push(p);
     save(); render(); return true;
   }, isNew?null:()=>{
-    if(!confirm(p.name+' 님을 삭제할까요?\n투입률·단가가 함께 삭제되어 수익성 인건비 계산에서 빠집니다.\n(퇴사자는 삭제 대신 투입률을 0으로 두고 단가를 "미적용"으로 바꾸는 방법도 있습니다)')) return;
+    if(!confirm(p.name+' 님을 삭제할까요?\n배정 내역과 연봉이 함께 삭제되어 수익성 인건비에서 빠집니다.\n(퇴사자는 삭제 대신 연봉을 "미적용"으로 두는 방법도 있습니다)')) return;
     DB.rates=DB.rates.filter(r=>r.name!==p.name);
+    DB.assignments=DB.assignments.filter(a=>a.person!==p.name);
     DB.people.splice(pi,1);
     save(); render(); closeModal();
   });
 }
+
 
 /* ── 지출 ── */
 let ef={cc:''};
@@ -1037,7 +1180,7 @@ function vProf(){
   const rows=allCC().map(ccCalc).filter(c=>c.count>0||c.labor>0||c.extBudget>0);
   const tt=rows.reduce((a,c)=>{ a.rev+=c.revenue; a.bud+=c.totalBudget; a.margin+=c.estMargin; a.ext+=c.actExt; return a; },{rev:0,bud:0,margin:0,ext:0});
   const nProb=rows.filter(c=>['주의','저마진','적자'].includes(c.state)).length;
-  return `${pageHead(`수익성 결론 · 원가센터 기준`,`인건비 = Σ(투입률 × 월 단가) × 투입개월 · 예비비 = 외부지출예산 × 예비비율 · 행을 누르면 입력값 편집`)}
+  return `${pageHead(`수익성 결론 · 원가센터 기준`,`인건비 = Σ(참여일수 × 일단가) · 일단가 = 연봉 ÷ 연간 근무일수 · 예비비 = 외부지출예산 × 예비비율`)}
   <div class="kpi">
    <div class="k"><div class="l">예상매출 합계</div><div class="v num">${wonS(tt.rev)}</div></div>
    <div class="k"><div class="l">총지출예산</div><div class="v num">${wonS(tt.bud)}</div></div>
@@ -1045,38 +1188,37 @@ function vProf(){
    <div class="k"><div class="l">예상 마진율</div><div class="v num">${tt.rev>0?pct(tt.margin/tt.rev):'-'}</div></div>
    <div class="k ${nProb?'am':''}"><div class="l">주의·저마진·적자</div><div class="v num">${nProb}</div></div>
   </div>
-  <div class="card"><div class="tw"><table><thead><tr><th>원가센터</th><th class="r">P수</th><th class="r">예상매출</th><th class="r">개월</th>
+  <div class="card"><div class="tw"><table><thead><tr><th>원가센터</th><th class="r">P수</th><th class="r">예상매출</th>
   <th class="r">외부지출예산</th><th class="r">예비비</th><th class="r">내부인건비</th><th class="r">총지출예산</th>
   <th class="r">예상 실질마진</th><th class="r">마진율</th><th class="r">확정 지출</th><th class="r">전망마진율</th><th class="r">확정마진율</th><th>상태</th><th>전략목적</th></tr></thead><tbody>
   ${rows.map(c=>`<tr class="click" onclick="editProf('${esc(c.cc)}')">
    <td><b>${esc(c.cc)}</b>${c.pi.memo?`<div class="hint">${esc(c.pi.memo)}</div>`:''}</td>
-   <td class="r num">${c.count}</td><td class="r num">${wonS(c.revenue)}</td><td class="r num">${c.pi.months}</td>
+   <td class="r num">${c.count}</td><td class="r num">${wonS(c.revenue)}</td>
    <td class="r num">${wonS(c.extBudget)}${budgetsOf(c.cc).length?'':' <span class="hint">직접입력</span>'}</td><td class="r num">${wonS(c.reserve)}</td>
-   <td class="r num">${wonS(c.labor)}</td><td class="r num"><b>${wonS(c.totalBudget)}</b></td>
+   <td class="r num">${wonS(c.labor)}${c.laborDays?`<div class="hint num">${Math.round(c.laborDays)}일</div>`:''}</td><td class="r num"><b>${wonS(c.totalBudget)}</b></td>
    <td class="r num" style="${c.estMargin<0?'color:var(--danger)':''}">${wonS(c.estMargin)}</td>
    <td class="r num"><b>${c.revenue>0?pct(c.estRate):'-'}</b></td>
    <td class="r num">${wonS(c.committed)}${c.overLines?` <span class="b rd">초과 ${c.overLines}</span>`:''}</td>
    <td class="r num">${c.revenue>0?pct(c.fcRate):'-'}</td><td class="r num">${c.revenue>0?pct(c.actRate):'-'}</td>
    <td>${profBadge(c.state)}</td><td class="mini">${esc(c.pi.purpose||'-')}</td></tr>`).join('')}
   </tbody></table></div></div>
-  <p class="hint">계획마진 = 매출−(예산+예비비+인건비) · 전망마진 = 매출−인건비−(라인별 max(예산,확정)) · 확정마진 = 매출−인건비−확정지출<br>
+  <p class="hint">계획마진 = 매출−(예산+예비비+인건비, 인건비는 인력분배 배정에서 자동) · 전망마진 = 매출−인건비−(라인별 max(예산,확정)) · 확정마진 = 매출−인건비−확정지출<br>
   외부지출예산은 <b>예산 대비 지출</b> 탭의 예산 라인 합계가 자동 연결됩니다 (라인이 없으면 이 화면의 직접입력값 사용).<br>
   상태 기준: 매출 0 → 매출미입력 · 마진율 &lt;0 → 적자 · &lt;${pct(DB.thresholds.low)} → 저마진 · &lt;${pct(DB.thresholds.warn)} → 주의 (설정에서 변경)</p>`;
 }
 function editProf(cc){
   const pi=profitInput(cc);
   openModal('수익성 입력 · '+esc(cc), `<div class="fgrid">
-  <div class="f"><label>투입개월</label><input id="f_m" type="number" step="0.5" value="${pi.months}"></div>
   <div class="f"><label>외부지출예산 (원)</label>${budgetsOf(cc).length
     ?`<input id="f_x" type="number" value="${ccExtBudget(cc)}" disabled title="예산 대비 지출 탭의 라인 합계"><span class="hint">예산 대비 지출 탭 라인 합계 (자동)</span>`
     :`<input id="f_x" type="number" value="${pi.extBudget||''}">`}</div>
   <div class="f"><label>예비비율 (예: 0.15)</label><input id="f_r" type="number" step="0.01" value="${pi.reserveRate}"></div>
   <div class="f"><label>전략목적</label><select id="f_p">${opt(DB.settings['전략목적']||[],pi.purpose)}</select></div>
   <div class="f full"><label>메모</label><input id="f_memo" value="${esc(pi.memo)}"></div>
-  </div><p class="hint" style="margin-top:10px">예상매출·인건비·실제지출은 각 탭 데이터에서 자동 연결됩니다.</p>`, ()=>{
+  </div><p class="hint" style="margin-top:10px">예상매출·인건비·실제지출은 각 탭 데이터에서 자동 연결됩니다. 인건비는 인력분배의 참여일수로 계산되므로 여기서 입력하지 않습니다.</p>`, ()=>{
     const g=id=>document.getElementById(id).value;
     const ext = budgetsOf(cc).length ? pi.extBudget : (+g('f_x')||0);
-    Object.assign(pi,{months:+g('f_m')||1,extBudget:ext,reserveRate:+g('f_r')||0,purpose:g('f_p'),memo:g('f_memo')});
+    Object.assign(pi,{months:pi.months||1,extBudget:ext,reserveRate:+g('f_r')||0,purpose:g('f_p'),memo:g('f_memo')});
     save(); render(); return true; });
 }
 
@@ -1187,6 +1329,10 @@ function vSet(){
    ${snaps.map((s,i)=>`<li>${esc(s.d)} <small class="hint">${esc((s.t||'').slice(11,16))}</small>
      <button class="btn ghost sm" style="margin-left:8px" onclick="restoreSnap(${i})">이 시점으로 복원</button></li>`).join('')}</ul></div>`:''}
   </div></div>
+  <div class="card"><div class="hd"><h2>인건비 기준</h2></div><div class="bd"><div class="fgrid">
+   <div class="f"><label>연간 근무일수 (연봉 → 일단가)</label><input type="number" value="${DB.workdaysPerYear||240}" onchange="DB.workdaysPerYear=+this.value||240;save();render()"></div>
+   <div class="f"><label>월 근무일수 (과부하 판정)</label><input type="number" value="${DB.workdaysPerMonth||20}" onchange="DB.workdaysPerMonth=+this.value||20;save();render()"></div>
+  </div><p class="hint" style="margin-top:8px">일단가 = 연봉 ÷ 연간 근무일수. 주 5일 기준 연 약 240~250일입니다.</p></div></div>
   <div class="card"><div class="hd"><h2>수익성 판정 기준</h2></div><div class="bd"><div class="fgrid">
    <div class="f"><label>저마진 기준 (미만, 예: 0.10)</label><input type="number" step="0.01" value="${DB.thresholds.low}" onchange="DB.thresholds.low=+this.value||0.1;save();render()"></div>
    <div class="f"><label>주의 기준 (미만, 예: 0.25)</label><input type="number" step="0.01" value="${DB.thresholds.warn}" onchange="DB.thresholds.warn=+this.value||0.25;save();render()"></div>
@@ -1198,8 +1344,8 @@ function vSet(){
   <div class="card"><div class="hd"><h2>연결맵 · 어디에 무엇을 입력하나</h2></div><div class="tw"><table>
   <thead><tr><th>화면</th><th>내가 입력하는 것</th><th>자동 연결되는 것</th></tr></thead><tbody>
   <tr><td><b>오늘 현황</b></td><td>입력 없음</td><td>마스터/수익성 요약 — 회의 때 보는 화면</td></tr>
-  <tr><td><b>프로젝트</b></td><td>기본정보, 원가센터, 액션, 예상매출</td><td>D-Day, 수익성상태, 마진율</td></tr>
-  <tr><td><b>인력분배</b></td><td>사람별 원가센터 투입률, 월 단가</td><td>총할당률/잔여/상태, 수익성 내부인건비</td></tr>
+  <tr><td><b>프로젝트</b></td><td>기본정보, 계약 시작일·마감일, 원가센터, 액션, 예상매출</td><td>D-Day, 수익성상태, 마진율</td></tr>
+  <tr><td><b>인력분배</b></td><td>사람별 원가센터 <b>참여일수</b>(기간 포함), 연봉</td><td>인건비(일수×일단가), 월별 부하·과부하, 수익성 내부인건비</td></tr>
   <tr><td><b>예산 대비 지출</b></td><td>원가센터 × 지출구분별 예산 라인</td><td>확정액/지급액/집행률/잔여, 수익성 외부지출예산</td></tr>
   <tr><td><b>지출 장부</b></td><td>실제 지출내역 (하위 코드 기준, 결제상태 포함)</td><td>프로젝트명/원가센터/예산 라인 자동 합산</td></tr>
   <tr><td><b>수익성 결론</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
