@@ -235,6 +235,26 @@ function migrate(){
   DB.settings['결제상태'] = DB.settings['결제상태'] || ['지급예정','청구대기','지급완료'];
   DB.settings['기록 유형'] = DB.settings['기록 유형'] || ['결정','지시','보고','논의','합의'];
   DB.settings['인력 매트릭스 원가센터'] = DB.settings['인력 매트릭스 원가센터'] || (DB.ccList||[]).slice(0,13);
+  // v13: 자금계획 — 입금 회차 · 지급예정일 · 고정지출 · 대출 · 기초잔액
+  DB.settings['회차 상태'] = DB.settings['회차 상태'] || ['예정','청구완료','입금완료'];
+  DB.settings['고정지출 구분'] = DB.settings['고정지출 구분'] || ['급여','4대보험','임대료','관리비','세금','보험료','통신·구독','기타'];
+  DB.settings['지급 주기'] = DB.settings['지급 주기'] || ['매월','분기','반기','연1회','1회'];
+  DB.settings['대출 상환방식'] = DB.settings['대출 상환방식'] || ['원리금균등','원금균등','만기일시','기타'];
+  DB.fixed = DB.fixed || [];
+  DB.loans = DB.loans || [];
+  DB.cashStart = DB.cashStart || {month:'', amount:0};
+  (DB.finance||[]).forEach(f=>{
+    if(!f.installments){
+      const inst=[]; let sum=0;
+      [['선금',f.adv],['중도금',f.mid],['잔금',f.bal]].forEach(([l,v])=>{ v=+v||0;
+        if(v>0){ inst.push({id:'i'+Math.random().toString(36).slice(2,9),label:l,amount:v,plan:'',invoice:'',paid:'',status:'입금완료'}); sum+=v; } });
+      const rem=(+f.total||0)-sum;
+      if(rem>0) inst.push({id:'i'+Math.random().toString(36).slice(2,9),label:'미입금 잔액',amount:rem,plan:f.expDate||'',invoice:'',paid:'',status:'예정'});
+      f.installments=inst;
+    }
+    if(!f.vatMode) f.vatMode='미확인';
+  });
+  (DB.expenses||[]).forEach(e=>{ if(e.payDate===undefined) e.payDate=''; });
   DB.workdaysPerYear = DB.workdaysPerYear || 240;   // 연간 근무일수 (연봉 → 일단가)
   DB.workdaysPerMonth = DB.workdaysPerMonth || 20;  // 월 근무일수 (과부하 판정 기준)
   // v12: 월단가 → 연봉
@@ -494,7 +514,90 @@ function allCC(){
 function projProf(p){ return p.cc && p.cc!=='-' ? ccCalc(p.cc) : null; }
 
 /* 재무 자동 */
-function finCalc(f){ const paid=(+f.adv||0)+(+f.mid||0)+(+f.bal||0); return {paid, due:(+f.total||0)-paid}; }
+/* ═══ 재무 · 자금흐름 엔진 ═══ */
+const vatFactor = f => f.vatMode==='별도' ? 1.1 : 1;
+function finCalc(f){
+  const inst=f.installments||[];
+  const total=+f.total||0;
+  const scheduled=inst.reduce((a,i)=>a+(+i.amount||0),0);
+  const paid=inst.filter(i=>i.status==='입금완료').reduce((a,i)=>a+(+i.amount||0),0);
+  const open=inst.filter(i=>i.status!=='입금완료');
+  const late=open.filter(i=>i.plan && dday(i.plan)<0);
+  const next=[...open].filter(i=>i.plan).sort((a,b)=>a.plan.localeCompare(b.plan))[0]||null;
+  return {total, scheduled, paid, due:total-paid, unassigned:Math.max(0,total-scheduled), overAssigned:scheduled>total+1,
+    late, lateAmt:late.reduce((a,i)=>a+(+i.amount||0),0), next, open, noDate:open.filter(i=>!i.plan)};
+}
+const ymOf = d => d ? String(d).slice(0,7) : '';
+const thisYM = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+function addM(ym,k){ let [y,m]=ym.split('-').map(Number); m+=k; y+=Math.floor((m-1)/12); m=((m-1)%12+12)%12+1; return y+'-'+String(m).padStart(2,'0'); }
+function mDiff(a,b){ const [ay,am]=a.split('-').map(Number), [by,bm]=b.split('-').map(Number); return (by-ay)*12+(bm-am); }
+function fixedIn(f,ym){
+  if(f.start && ym<ymOf(f.start)) return false;
+  if(f.end && ym>ymOf(f.end)) return false;
+  const anchor=f.start?ymOf(f.start):ym.slice(0,4)+'-01';
+  const d=mDiff(anchor,ym); if(d<0) return false;
+  switch(f.cycle){ case '분기': return d%3===0; case '반기': return d%6===0; case '연1회': return d%12===0;
+    case '1회': return !!f.start && d===0; default: return true; }
+}
+const monthlyEquiv = f => ({'매월':1,'분기':1/3,'반기':1/6,'연1회':1/12,'1회':0}[f.cycle||'매월']??1)*(+f.amount||0);
+function loanOut(l,ym){
+  const out=[];
+  if(l.start && ym<ymOf(l.start)) return out;
+  const mat=ymOf(l.maturity);
+  if(mat && ym>mat) return out;
+  if(+l.monthly>0) out.push({label:(l.repayType==='만기일시'?'이자':'원리금'), amount:+l.monthly});
+  if(l.repayType==='만기일시' && mat && ym===mat && +l.balance>0) out.push({label:'만기 상환', amount:+l.balance});
+  return out;
+}
+/* 모든 현금 이벤트를 월별로: 미완료 + 지난 달 예정분은 이번 달로 이월 */
+function cashEvents(){
+  const cur=thisYM(), ev=[], unplaced=[];
+  DB.finance.forEach(f=>{ const p=projOf(f.code); if(!p) return; const vf=vatFactor(f);
+    (f.installments||[]).forEach(i=>{
+      const amt=(+i.amount||0)*vf; if(!amt) return;
+      if(i.status==='입금완료'){ if(i.paid) ev.push({ym:ymOf(i.paid),dir:'in',cat:'입금',done:true,amount:amt,label:pname(p)+' · '+i.label,ref:{t:'fin',id:f.code},date:i.paid}); return; }
+      if(!i.plan){ unplaced.push({dir:'in',label:pname(p)+' · '+i.label,amount:amt,ref:{t:'fin',id:f.code}}); return; }
+      const pm=ymOf(i.plan);
+      ev.push({ym:pm<cur?cur:pm,dir:'in',cat:'입금',done:false,carried:pm<cur,amount:amt,label:pname(p)+' · '+i.label+(i.status==='청구완료'?' (청구완료)':''),ref:{t:'fin',id:f.code},date:i.plan});
+    });
+  });
+  DB.expenses.forEach(e=>{
+    const amt=+e.amount||0; if(!amt) return; const p=projOf(e.code);
+    const label=(p?pname(p):e.code||'(미연결)')+' · '+(e.item||e.kind||'지출')+(e.vendor?' · '+e.vendor:'');
+    const d=e.payDate||e.date; const done=e.payState==='지급완료';
+    if(!d){ if(!done) unplaced.push({dir:'out',label,amount:amt,ref:{t:'exp',id:e.id}}); return; }
+    const m=ymOf(d);
+    ev.push({ym:(!done&&m<cur)?cur:m,dir:'out',cat:'프로젝트 지출',done,carried:!done&&m<cur,amount:amt,label,ref:{t:'exp',id:e.id},date:d});
+  });
+  return {ev, unplaced};
+}
+function cashMonth(ym, evs){
+  const r={ym, inDone:0,inPlan:0,expDone:0,expPlan:0,fixed:0,loan:0,items:[]};
+  evs.filter(e=>e.ym===ym).forEach(e=>{ r.items.push(e);
+    if(e.dir==='in'){ if(e.done) r.inDone+=e.amount; else r.inPlan+=e.amount; }
+    else { if(e.done) r.expDone+=e.amount; else r.expPlan+=e.amount; } });
+  DB.fixed.forEach(f=>{ if(fixedIn(f,ym)&&+f.amount){ r.fixed+=+f.amount;
+    r.items.push({dir:'out',cat:'고정지출',amount:+f.amount,label:f.name+' ('+(f.kind||'')+')',ref:{t:'fix',id:f.id},date:f.start?ym+'-'+f.start.slice(8,10):''}); } });
+  DB.loans.forEach(l=>{ loanOut(l,ym).forEach(o=>{ r.loan+=o.amount;
+    r.items.push({dir:'out',cat:'대출 상환',amount:o.amount,label:(l.lender||'대출')+' · '+o.label,ref:{t:'loan',id:l.id},date:l.payDay?ym+'-'+String(l.payDay).padStart(2,'0'):''}); }); });
+  r.in=r.inDone+r.inPlan; r.out=r.expDone+r.expPlan+r.fixed+r.loan; r.net=r.in-r.out;
+  return r;
+}
+/* 기초잔액 월부터 누적 → 각 월말 잔액 */
+function cashSeries(from, n){
+  const {ev, unplaced}=cashEvents();
+  const months=[...Array(n)].map((_,i)=>addM(from,i));
+  const rows=months.map(m=>cashMonth(m,ev));
+  const cs=DB.cashStart||{};
+  if(cs.month){
+    let bal=+cs.amount||0, m=cs.month;
+    const last=months[months.length-1];
+    const endBal={};
+    while(m<=last){ bal+=cashMonth(m,ev).net; endBal[m]=bal; m=addM(m,1); }
+    rows.forEach(r=>{ r.endBal = r.ym>=cs.month ? endBal[r.ym] : null; });
+  }
+  return {rows, unplaced, ev};
+}
 /* 인력 자동 */
 function personCalc(per){
   const rows=asgOfPerson(per.name);
@@ -520,9 +623,11 @@ const VIEWS=[
  {id:'week', name:'이번 주 할 일', short:'이번 주', ic:'☑', grp:'업무'},
  {id:'dec', name:'결정 기록', ic:'✎', grp:'업무'},
  // 돈 — 들어오고, 계획하고, 나가고, 남는 순서
+ {id:'cash', name:'자금 흐름', ic:'⇄', grp:'돈'},
  {id:'fin', name:'계약·입금', ic:'▦', grp:'돈'},
  {id:'bud', name:'예산 대비 지출', ic:'◧', grp:'돈'},
  {id:'exp', name:'지출 장부', ic:'▨', grp:'돈'},
+ {id:'fix', name:'고정비·대출', ic:'▣', grp:'돈'},
  {id:'prof', name:'수익성 결론', short:'수익성', ic:'₩', grp:'돈'},
  // 관리
  {id:'ppl', name:'인력분배', ic:'👥', grp:'관리'},
@@ -557,12 +662,13 @@ function stripHtml(){
   const lowm=ccAll.filter(c=>['저마진','적자'].includes(c.state));
   const overBud=ccAll.reduce((a,c)=>a+c.overLines,0);
   const overload=DB.people.filter(p=>personCalc(p).state==='과부하');
+  const lateIn=DB.finance.filter(f=>projOf(f.code)).reduce((a,f)=>a+finCalc(f).late.length,0);
   const c=(n,lbl,cls)=>`<div class="chip ${n>0?cls:''}"><b class="num">${n}</b>${lbl}</div>`;
   return `<div id="strip">
     <div class="chip"><b class="num">${all.length}</b>전체</div>
     <div class="chip"><b class="num">${run.length}</b>진행중</div>
     ${c(risk.length,'위험','alert')}${c(over.length,'마감초과','alert')}
-    ${c(week.length,'미완 액션','')} ${c(lowm.length,'저마진·적자','warn')} ${c(overBud,'예산초과 라인','alert')} ${c(overload.length,'과부하 인원','warn')}
+    ${c(week.length,'미완 액션','')} ${c(lowm.length,'저마진·적자','warn')} ${c(overBud,'예산초과 라인','alert')} ${c(lateIn,'입금 지연','alert')} ${c(overload.length,'과부하 인원','warn')}
   </div>`;
 }
 
@@ -570,7 +676,7 @@ function stripHtml(){
 function render(){
   renderNav();
   const m=document.getElementById('main');
-  m.innerHTML = stripHtml() + ({dash:vDash,proj:vProj,week:vWeek,dec:vDec,fin:vFin,ppl:vPpl,exp:vExp,prof:vProf,bud:vBud,set:vSet}[CUR])();
+  m.innerHTML = stripHtml() + ({dash:vDash,proj:vProj,week:vWeek,dec:vDec,fin:vFin,ppl:vPpl,exp:vExp,prof:vProf,bud:vBud,cash:vCash,fix:vFix,set:vSet}[CUR])();
 }
 
 /* ── 대시보드 ── */
@@ -599,6 +705,14 @@ function vDash(){
     <td class="r num">${c.revenue>0?pct(c.estRate):'-'}</td><td>${profBadge(c.state)}</td><td class="mini">${esc(c.pi.memo||'')}</td></tr>`).join('')
     || '<tr><td colspan="6" class="empty">문제 있는 원가센터가 없습니다.</td></tr>'}
   </tbody></table></div></div>
+  ${(()=>{ const {rows}=cashSeries(thisYM(),1); const r=rows[0];
+    return `<div class="card"><div class="hd"><h2>이번 달 자금</h2><span class="sp"></span><button class="btn ghost sm" onclick="go('cash')">자금 흐름 →</button></div>
+    <div class="bd" style="display:flex;gap:8px;flex-wrap:wrap">
+     <div class="chip"><b class="num" style="color:var(--ok)">${wonS(r.in)}</b>들어올 돈</div>
+     <div class="chip"><b class="num">${wonS(r.out)}</b>나갈 돈</div>
+     <div class="chip ${r.net<0?'alert':''}"><b class="num">${r.net<0?'−':''}${wonS(Math.abs(r.net))}</b>순현금</div>
+     ${r.endBal!=null?`<div class="chip ${r.endBal<0?'alert':''}"><b class="num">${r.endBal<0?'−':''}${wonS(Math.abs(r.endBal))}</b>월말 예상 잔액</div>`:''}
+    </div></div>`; })()}
   <div class="card"><div class="hd"><h2>사용 기준</h2></div><div class="bd"><ul class="notes">
     <li>입력은 <b>프로젝트 / 지출 장부 / 인력분배 / 예산 대비 지출</b>에서 합니다. 돈 흐름은 계약·입금 → 예산 → 지출 → 수익성 순서로 봅니다.</li>
     <li>중단·취소는 삭제하지 말고 <b>상태값</b>으로 남깁니다. 사유는 결정로그에 기록.</li>
@@ -686,7 +800,7 @@ function editProj(code){
       milestone:g('f_ms'),action:document.getElementById('f_action').value,decision:document.getElementById('f_dec').value,
       risk:document.getElementById('f_risk').value,revenue:+g('f_rev')||0,contract:g('f_contract'),link:g('f_link'),note:g('f_note')});
     if(isNew){ delete t._new; DB.projects.push(t);
-      DB.finance.push({code:nc,client:'',total:0,contract:'',adv:0,mid:0,bal:0,tax:'',expDate:'',note:''}); }
+      DB.finance.push({code:nc,client:'',total:0,contract:'',vatMode:'미확인',installments:[],tax:'',note:''}); }
     save(); render(); return true;
   }, isNew?null:()=>{ if(!confirm('삭제 대신 상태를 "중단/취소"로 남기는 걸 권장합니다.\n정말 삭제할까요?')) return;
       DB.projects=DB.projects.filter(x=>x.code!==code); save(); render(); closeModal(); });
@@ -928,48 +1042,259 @@ function editDec(id){
   }, isNew?null:()=>{ DB.decisions=DB.decisions.filter(x=>x.id!==id); save(); render(); closeModal(); });
 }
 
-/* ── 재무 ── */
+/* ── 재무 (계약·입금) ── */
+let finF={only:''};
+function instDots(f){
+  return (f.installments||[]).map(i=>{
+    const c=i.status==='입금완료'?'var(--ok)':(i.plan&&dday(i.plan)<0?'var(--danger)':(i.status==='청구완료'?'var(--amber)':'var(--line)'));
+    return `<span title="${esc(i.label)} · ${esc(i.status)}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:3px"></span>`; }).join('');
+}
+function vatBadge(f){ const m={'별도':'bl','포함':'gy','면세':'gy','미확인':'a'}; return `<span class="b ${m[f.vatMode]||'a'}">VAT ${esc(f.vatMode||'미확인')}</span>`; }
 function vFin(){
-  const rows=DB.finance.filter(f=>projOf(f.code));
-  const tt=rows.reduce((a,f)=>{ const c=finCalc(f); a.total+=(+f.total||0); a.paid+=c.paid; a.due+=c.due; return a; },{total:0,paid:0,due:0});
-  return `${pageHead(`계약 / 입금 관리`,`계약·입금은 하위 프로젝트 기준 · 입금합계와 미수금은 자동 계산`)}
+  let rows=DB.finance.filter(f=>projOf(f.code));
+  const all=rows.map(f=>({f,c:finCalc(f)}));
+  if(finF.only==='late') rows=rows.filter(f=>finCalc(f).late.length);
+  if(finF.only==='open') rows=rows.filter(f=>finCalc(f).due>0);
+  if(finF.only==='gap') rows=rows.filter(f=>{ const c=finCalc(f); return c.unassigned>0||c.noDate.length||f.vatMode==='미확인'; });
+  const tt=all.reduce((a,{f,c})=>{ a.total+=c.total; a.paid+=c.paid; a.due+=c.due; a.late+=c.lateAmt; a.lateN+=c.late.length; a.gap+=c.unassigned; return a; },{total:0,paid:0,due:0,late:0,lateN:0,gap:0});
+  const gapN=all.filter(({f,c})=>c.unassigned>0||c.noDate.length||f.vatMode==='미확인').length;
+  return `${pageHead(`계약 · 입금`,`계약마다 선금·중도금·잔금을 회차로 나눠 예정일·세금계산서 발행일·실입금일을 관리합니다 · 자금 흐름 탭에 자동 반영`)}
   <div class="kpi">
-    <div class="k"><div class="l">총 계약금</div><div class="v num">${wonS(tt.total)}</div></div>
-    <div class="k gr"><div class="l">입금 합계</div><div class="v num">${wonS(tt.paid)}</div></div>
-    <div class="k ${tt.due>0?'rd':''}"><div class="l">미수금</div><div class="v num">${wonS(tt.due)}</div></div>
+    <div class="k"><div class="l">총 계약금액</div><div class="v num">${wonS(tt.total)}</div></div>
+    <div class="k gr"><div class="l">입금 완료</div><div class="v num">${wonS(tt.paid)}</div></div>
+    <div class="k"><div class="l">미수금</div><div class="v num">${wonS(tt.due)}</div></div>
+    <div class="k ${tt.lateN?'rd':''}"><div class="l">입금 지연 (${tt.lateN}건)</div><div class="v num">${wonS(tt.late)}</div></div>
+    <div class="k ${gapN?'am':''}"><div class="l">정보 보완 필요</div><div class="v num">${gapN}건</div></div>
   </div>
-  <div class="card"><div class="tw"><table><thead><tr><th>프로젝트</th><th>클라이언트</th><th class="r">총 계약금</th><th>계약 상태</th>
-  <th class="r">선금</th><th class="r">중도금</th><th class="r">잔금</th><th class="r">입금합계</th><th class="r">미수금</th><th>세금계산서</th><th>입금 예정</th></tr></thead><tbody>
+  <div class="filters"><div class="seg">
+    <button class="${!finF.only?'on':''}" onclick="finF.only='';render()">전체</button>
+    <button class="${finF.only==='open'?'on':''}" onclick="finF.only='open';render()">미수 있음</button>
+    <button class="${finF.only==='late'?'on':''}" onclick="finF.only='late';render()">지연</button>
+    <button class="${finF.only==='gap'?'on':''}" onclick="finF.only='gap';render()">보완 필요</button>
+  </div></div>
+  <div class="card"><div class="tw"><table><thead><tr><th>프로젝트</th><th>클라이언트</th><th class="r">계약금액</th><th>회차</th>
+  <th class="r">입금완료</th><th class="r">미수</th><th>다음 입금</th><th>확인</th></tr></thead><tbody>
   ${rows.map(f=>{ const c=finCalc(f);
-    return `<tr class="click" onclick="editFin('${f.code}')">
-    <td><b>${esc(pnameByCode(f.code))}</b><div class="hint">${esc(f.code)}</div></td>
-    <td>${esc(f.client||'-')}</td><td class="r num">${wonS(f.total)}</td><td class="mini">${esc(f.contract||'-')}</td>
-    <td class="r num">${wonS(f.adv)}</td><td class="r num">${wonS(f.mid)}</td><td class="r num">${wonS(f.bal)}</td>
-    <td class="r num"><b>${wonS(c.paid)}</b></td>
-    <td class="r num" style="${c.due>0?'color:var(--danger);font-weight:800':''}">${wonS(c.due)}</td>
-    <td class="mini">${esc(f.tax||'-')}</td><td class="num">${esc(f.expDate||'-')}</td></tr>`; }).join('')}
-  </tbody><tfoot><tr><td colspan="2">합계</td><td class="r num">${wonS(tt.total)}</td><td></td><td colspan="3"></td>
-  <td class="r num">${wonS(tt.paid)}</td><td class="r num">${wonS(tt.due)}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
+    const flags=[c.late.length?'<span class="b rd">지연</span>':'', c.unassigned>0?`<span class="b a">회차 미배정 ${wonS(c.unassigned)}</span>`:'',
+      c.overAssigned?'<span class="b rd">회차 합 초과</span>':'', c.noDate.length?`<span class="b a">예정일 없음 ${c.noDate.length}</span>`:'',
+      f.vatMode==='미확인'?'<span class="b a">VAT 확인</span>':''].filter(Boolean).join(' ');
+    return `<tr class="click" onclick="editFin('${esc(f.code)}')">
+    <td><b>${esc(pnameByCode(f.code))}</b><div class="hint">${esc(f.code)} · ${esc(f.contract||'계약상태 미입력')}</div></td>
+    <td class="mini">${esc(f.client||'-')}</td>
+    <td class="r num">${wonS(c.total)}<div>${vatBadge(f)}</div></td>
+    <td style="white-space:nowrap">${instDots(f)||'<span class="hint">-</span>'}</td>
+    <td class="r num">${wonS(c.paid)}</td>
+    <td class="r num" style="${c.due>0?'font-weight:800':''}">${wonS(c.due)}</td>
+    <td class="mini">${c.next?`<span class="num">${esc(c.next.plan)}</span> ${ddayHtml(dday(c.next.plan))}<div class="hint">${esc(c.next.label)} · ${wonS(c.next.amount)}</div>`:'<span class="hint">-</span>'}</td>
+    <td class="mini">${flags||'<span class="b g">OK</span>'}</td></tr>`; }).join('')||'<tr><td colspan="8" class="empty">해당 계약이 없습니다.</td></tr>'}
+  </tbody><tfoot><tr><td colspan="2">합계</td><td class="r num">${wonS(tt.total)}</td><td></td><td class="r num">${wonS(tt.paid)}</td><td class="r num">${wonS(tt.due)}</td><td colspan="2"></td></tr></tfoot></table></div></div>
+  <p class="hint">회차 점: <span style="color:var(--ok)">●</span> 입금완료 · <span style="color:var(--amber)">●</span> 청구완료 · <span style="color:var(--danger)">●</span> 예정일 지남 · <span style="color:var(--sub)">●</span> 예정. 금액은 계약 기준(VAT 별도 계약은 자금 흐름에서 ×1.1로 계산).</p>`;
+}
+let finRows=[];
+function renderFinRows(){
+  const box=document.getElementById('fin_rows'); if(!box) return;
+  const st=DB.settings['회차 상태']||['예정','청구완료','입금완료'];
+  box.innerHTML = finRows.map((i,k)=>`<div style="border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:8px;background:#FAFBFA">
+   <div class="fgrid">
+    <div class="f"><label>회차</label><input id="fr_l${k}" list="fr_labels" value="${esc(i.label)}"></div>
+    <div class="f"><label>금액 (계약 기준)</label><input id="fr_a${k}" type="number" value="${i.amount||''}"></div>
+    <div class="f"><label>입금 예정일</label><input id="fr_p${k}" type="date" value="${esc(i.plan)}"></div>
+    <div class="f"><label>세금계산서 발행일</label><input id="fr_v${k}" type="date" value="${esc(i.invoice)}"></div>
+    <div class="f"><label>실제 입금일</label><input id="fr_d${k}" type="date" value="${esc(i.paid)}"></div>
+    <div class="f"><label>상태</label><select id="fr_s${k}">${st.map(x=>`<option ${x===i.status?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+   </div>
+   <div style="text-align:right;margin-top:6px"><button class="btn ghost sm" onclick="readFinRows();finRows.splice(${k},1);renderFinRows()">이 회차 삭제</button></div>
+  </div>`).join('') || '<p class="hint">회차가 없습니다. 아래 버튼으로 추가하거나 비율 프리셋을 쓰세요.</p>';
+  const sum=finRows.reduce((a,i)=>a+(+i.amount||0),0), tot=+(document.getElementById('f_tt')?.value)||0;
+  const h=document.getElementById('fin_sum');
+  if(h) h.innerHTML=`회차 합계 <b class="num">${won(sum)||'₩0'}</b> / 계약금액 <b class="num">${won(tot)||'₩0'}</b>
+    ${tot&&Math.abs(sum-tot)>1?`<span class="b ${sum>tot?'rd':'a'}" style="margin-left:6px">${sum>tot?'초과':'미배정'} ${won(Math.abs(tot-sum))}</span>`:(tot?'<span class="b g" style="margin-left:6px">일치</span>':'')}`;
+}
+function readFinRows(){
+  finRows=finRows.map((i,k)=>{ const g=id=>document.getElementById(id);
+    if(!g('fr_l'+k)) return i;
+    return {...i, label:g('fr_l'+k).value.trim()||i.label, amount:+g('fr_a'+k).value||0, plan:g('fr_p'+k).value,
+      invoice:g('fr_v'+k).value, paid:g('fr_d'+k).value, status:g('fr_s'+k).value}; });
+}
+function addFinRow(){ readFinRows(); const n=finRows.length;
+  finRows.push({id:uid('i'),label:n===0?'선금':(n===1?'잔금':'중도금'),amount:0,plan:'',invoice:'',paid:'',status:'예정'}); renderFinRows(); }
+function presetFin(parts){
+  const tot=+(document.getElementById('f_tt')?.value)||0;
+  if(!tot){ toast('계약금액을 먼저 입력하세요'); return; }
+  readFinRows();
+  const done=finRows.filter(i=>i.status==='입금완료');
+  if(done.length && !confirm('입금완료 회차는 유지하고 나머지만 다시 나눌까요?')) return;
+  const doneSum=done.reduce((a,i)=>a+(+i.amount||0),0), rest=tot-doneSum;
+  const names=parts.length===1?['일시불']:parts.length===2?['선금','잔금']:['선금','중도금','잔금'];
+  const pctSum=parts.reduce((a,b)=>a+b,0);
+  let acc=0;
+  const fresh=parts.map((pc,k)=>{ const amt=k===parts.length-1?rest-acc:Math.round(rest*pc/pctSum); acc+=amt;
+    return {id:uid('i'),label:names[k],amount:amt,plan:'',invoice:'',paid:'',status:'예정'}; });
+  finRows=[...done,...fresh]; renderFinRows();
 }
 function editFin(code){
   let f=DB.finance.find(x=>x.code===code);
-  if(!f){ f={code,client:'',total:0,contract:'',adv:0,mid:0,bal:0,tax:'',expDate:'',note:''}; DB.finance.push(f); }
-  openModal('계약/입금 · '+esc(pnameByCode(code)), `<div class="fgrid">
+  if(!f){ f={code,client:'',total:0,contract:'',vatMode:'미확인',installments:[],tax:'',note:''}; DB.finance.push(f); }
+  finRows=JSON.parse(JSON.stringify(f.installments||[]));
+  openModal('계약 · 입금 · '+esc(pnameByCode(code)), `<div class="fgrid">
   <div class="f"><label>클라이언트/파트너</label><input id="f_cl" value="${esc(f.client)}"></div>
   <div class="f"><label>계약 상태</label><select id="f_ct">${opt(DB.settings['계약 상태']||[],f.contract)}</select></div>
-  <div class="f"><label>총 계약금 (원)</label><input id="f_tt" type="number" value="${f.total||''}"></div>
-  <div class="f"><label>세금계산서</label><input id="f_tax" value="${esc(f.tax)}"></div>
-  <div class="f"><label>선금</label><input id="f_adv" type="number" value="${f.adv||''}"></div>
-  <div class="f"><label>중도금</label><input id="f_mid" type="number" value="${f.mid||''}"></div>
-  <div class="f"><label>잔금</label><input id="f_bal" type="number" value="${f.bal||''}"></div>
-  <div class="f"><label>입금 예정일</label><input id="f_ed" type="date" value="${esc(f.expDate)}"></div>
-  <div class="f full"><label>비고</label><input id="f_nt" value="${esc(f.note)}"></div>
-  </div><p class="hint" style="margin-top:10px">입금합계·미수금은 자동 계산됩니다.</p>`, ()=>{
+  <div class="f"><label>계약금액 (원)</label><input id="f_tt" type="number" value="${f.total||''}" oninput="renderFinRows()"></div>
+  <div class="f"><label>부가세</label><select id="f_vat">${['별도','포함','면세','미확인'].map(v=>`<option ${f.vatMode===v?'selected':''}>${v}</option>`).join('')}</select></div>
+  <div class="f full"><label>비고</label><input id="f_nt" value="${esc(f.note||'')}"></div>
+  </div>
+  <div class="subsec"><h4>입금 회차</h4>
+   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <span class="hint" style="align-self:center">비율 프리셋:</span>
+    <button class="btn ghost sm" onclick="presetFin([100])">일시불</button>
+    <button class="btn ghost sm" onclick="presetFin([30,70])">30·70</button>
+    <button class="btn ghost sm" onclick="presetFin([50,50])">50·50</button>
+    <button class="btn ghost sm" onclick="presetFin([30,40,30])">30·40·30</button>
+   </div>
+   <datalist id="fr_labels"><option>선금</option><option>중도금</option><option>잔금</option><option>일시불</option><option>추가 정산</option></datalist>
+   <div id="fin_rows"></div>
+   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" onclick="addFinRow()">+ 회차 추가</button><span class="hint" id="fin_sum"></span></div>
+   <p class="hint" style="margin-top:8px">실제 입금일을 넣으면 저장 시 자동으로 '입금완료', 세금계산서 발행일만 있으면 '청구완료'로 바뀝니다.</p>
+  </div>`, ()=>{
+    readFinRows();
     const g=id=>document.getElementById(id).value;
-    Object.assign(f,{client:g('f_cl'),contract:g('f_ct'),total:+g('f_tt')||0,tax:g('f_tax'),
-      adv:+g('f_adv')||0,mid:+g('f_mid')||0,bal:+g('f_bal')||0,expDate:g('f_ed'),note:g('f_nt')});
+    finRows.forEach(i=>{ if(i.paid) i.status='입금완료'; else if(i.invoice && i.status==='예정') i.status='청구완료'; });
+    Object.assign(f,{client:g('f_cl'),contract:g('f_ct'),total:+g('f_tt')||0,vatMode:g('f_vat'),note:g('f_nt'),
+      installments:finRows.filter(i=>(+i.amount||0)>0||i.plan||i.paid)});
     save(); render(); return true; });
+  setTimeout(renderFinRows,0);
 }
+
+/* ── 자금 흐름 ── */
+let cf={from:'', n:6};
+function vCash(){
+  if(!cf.from) cf.from=addM(thisYM(),-1);
+  const {rows, unplaced}=cashSeries(cf.from, cf.n);
+  const cur=rows.find(r=>r.ym===thisYM());
+  const lateList=[]; DB.finance.forEach(f=>{ const p=projOf(f.code); if(!p) return; finCalc(f).late.forEach(i=>lateList.push({f,p,i})); });
+  const cs=DB.cashStart||{};
+  const cell=(ym,v,kind,style='')=>`<td class="r num" style="cursor:pointer;${style}" onclick="cashDetail('${ym}','${kind}')">${v?wonS(v):'<span style="opacity:.35">·</span>'}</td>`;
+  return `${pageHead(`자금 흐름`,`들어올 돈(입금 회차) · 나갈 돈(프로젝트 지출·고정지출·대출 상환)을 월별로 합칩니다 · 지난 달에 못 받은/못 낸 예정분은 이번 달로 이월 · 셀을 누르면 내역`)}
+  <div class="kpi">
+   <div class="k gr"><div class="l">이번 달 들어올 돈</div><div class="v num">${wonS(cur?cur.in:0)}</div></div>
+   <div class="k"><div class="l">이번 달 나갈 돈</div><div class="v num">${wonS(cur?cur.out:0)}</div></div>
+   <div class="k ${cur&&cur.net<0?'rd':''}"><div class="l">이번 달 순현금</div><div class="v num">${cur?(cur.net<0?'−':'')+wonS(Math.abs(cur.net)):'-'}</div></div>
+   <div class="k ${cur&&cur.endBal!=null&&cur.endBal<0?'rd':''}"><div class="l">이번 달 말 예상 잔액</div><div class="v num">${cur&&cur.endBal!=null?(cur.endBal<0?'−':'')+wonS(Math.abs(cur.endBal)):'<span style="font-size:13px">기초잔액 입력 필요</span>'}</div></div>
+   <div class="k ${unplaced.length?'am':''}"><div class="l">일정 미정 (${unplaced.length}건)</div><div class="v num">${wonS(unplaced.reduce((a,u)=>a+u.amount,0))}</div></div>
+  </div>
+  <div class="filters">
+   <label class="hint" style="align-self:center">시작월</label>
+   <input type="month" value="${esc(cf.from)}" onchange="cf.from=this.value||cf.from;render()" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">
+   <div class="seg">${[6,12].map(n=>`<button class="${cf.n===n?'on':''}" onclick="cf.n=${n};render()">${n}개월</button>`).join('')}</div>
+   <span style="flex:1"></span>
+   <label class="hint" style="align-self:center">기초잔액</label>
+   <input type="month" value="${esc(cs.month||'')}" title="이 달 1일 기준 통장 잔액" onchange="DB.cashStart.month=this.value;save();render()" style="padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">
+   <input type="number" placeholder="월초 잔액(원)" value="${cs.amount||''}" onchange="DB.cashStart.amount=+this.value||0;save();render()" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);width:150px">
+  </div>
+  <div class="card"><div class="tw"><table class="mtx"><thead><tr><th class="name" style="min-width:120px">구분</th>
+   ${rows.map(r=>`<th class="r" style="${r.ym===thisYM()?'color:var(--brand-ink)':''}">${esc(r.ym.slice(2).replace('-','.'))}${r.ym===thisYM()?' ◀':''}</th>`).join('')}</tr></thead><tbody>
+   <tr><td class="name" style="color:var(--ok)">＋ 입금 완료</td>${rows.map(r=>cell(r.ym,r.inDone,'inDone')).join('')}</tr>
+   <tr><td class="name" style="color:var(--ok)">＋ 입금 예정</td>${rows.map(r=>cell(r.ym,r.inPlan,'inPlan')).join('')}</tr>
+   <tr><td class="name">− 프로젝트 지출</td>${rows.map(r=>cell(r.ym,r.expDone+r.expPlan,'exp')).join('')}</tr>
+   <tr><td class="name">− 고정지출</td>${rows.map(r=>cell(r.ym,r.fixed,'fix')).join('')}</tr>
+   <tr><td class="name">− 대출 상환</td>${rows.map(r=>cell(r.ym,r.loan,'loan')).join('')}</tr>
+   <tr style="background:#FAFBFA"><td class="name"><b>순현금흐름</b></td>${rows.map(r=>`<td class="r num" style="font-weight:800;${r.net<0?'color:var(--danger)':''}">${r.net?(r.net<0?'−':'')+wonS(Math.abs(r.net)):'·'}</td>`).join('')}</tr>
+   <tr style="background:#FAFBFA"><td class="name"><b>월말 잔액</b></td>${rows.map(r=>`<td class="r num" style="font-weight:800;${r.endBal!=null&&r.endBal<0?'color:var(--danger);background:var(--danger-bg)':''}">${r.endBal==null?'<span class="hint">-</span>':(r.endBal<0?'−':'')+wonS(Math.abs(r.endBal))}</td>`).join('')}</tr>
+   </tbody></table></div></div>
+  ${cs.month?'':'<p class="hint" style="margin-top:-8px;margin-bottom:14px">월말 잔액을 보려면 오른쪽 위 <b>기초잔액</b>에 기준 월과 그 달 1일 통장 잔액을 넣으세요.</p>'}
+  ${lateList.length?`<div class="card"><div class="hd"><h2>입금 지연</h2><span class="hint">예정일이 지났는데 입금완료가 아닌 회차 — 이번 달 입금 예정으로 이월 계산 중</span></div>
+   <div class="tw"><table><tbody>${lateList.sort((a,b)=>a.i.plan.localeCompare(b.i.plan)).map(({f,p,i})=>`<tr class="click" onclick="editFin('${esc(f.code)}')">
+   <td><b>${esc(pname(p))}</b><div class="hint">${esc(f.client||'')}</div></td><td>${esc(i.label)}</td>
+   <td class="num">${esc(i.plan)} ${ddayHtml(dday(i.plan))}</td><td class="r num"><b>${wonS((+i.amount||0)*vatFactor(f))}</b></td>
+   <td>${statusBadge(i.status)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+  ${unplaced.length?`<div class="card"><div class="hd"><h2>일정 미정</h2><span class="hint">날짜가 없어 월별 흐름에서 빠진 금액 — 날짜를 넣으면 반영됩니다</span></div>
+   <div class="tw"><table><tbody>${unplaced.map(u=>`<tr class="click" onclick="${u.ref.t==='fin'?`editFin('${esc(u.ref.id)}')`:`editExp('${esc(u.ref.id)}')`}">
+   <td>${u.dir==='in'?'<span class="b g">입금</span>':'<span class="b rd">지출</span>'}</td><td>${esc(u.label)}</td><td class="r num"><b>${wonS(u.amount)}</b></td></tr>`).join('')}</tbody></table></div></div>`:''}`;
+}
+function cashDetail(ym, kind){
+  const {ev}=cashEvents(); const r=cashMonth(ym,ev);
+  const f={inDone:e=>e.dir==='in'&&e.done, inPlan:e=>e.dir==='in'&&!e.done, exp:e=>e.cat==='프로젝트 지출', fix:e=>e.cat==='고정지출', loan:e=>e.cat==='대출 상환'}[kind]||(()=>true);
+  const items=r.items.filter(f).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const title={inDone:'입금 완료',inPlan:'입금 예정',exp:'프로젝트 지출',fix:'고정지출',loan:'대출 상환'}[kind]||'';
+  const go_=it=>({fin:`closeModal();editFin('${esc(it.ref.id)}')`,exp:`closeModal();editExp('${esc(it.ref.id)}')`,fix:`closeModal();editFix('${esc(it.ref.id)}')`,loan:`closeModal();editLoan('${esc(it.ref.id)}')`}[it.ref.t]);
+  openModal(esc(ym)+' · '+title, `<div class="tw"><table><tbody>
+  ${items.map(it=>`<tr class="click" onclick="${go_(it)}"><td class="num mini">${esc(it.date||'-')}</td><td class="mini">${esc(it.label)}${it.carried?' <span class="b a">이월</span>':''}${it.cat==='프로젝트 지출'?(it.done?' <span class="b g">지급완료</span>':' <span class="b gy">예정</span>'):''}</td>
+  <td class="r num"><b>${won(Math.round(it.amount))}</b></td></tr>`).join('')||'<tr><td class="empty">내역이 없습니다.</td></tr>'}
+  </tbody>${items.length?`<tfoot><tr><td colspan="2">합계</td><td class="r num">${won(Math.round(items.reduce((a,i)=>a+i.amount,0)))}</td></tr></tfoot>`:''}</table></div>`, null);
+}
+
+/* ── 고정비 · 대출 ── */
+function vFix(){
+  const mEq=DB.fixed.reduce((a,f)=>a+monthlyEquiv(f),0);
+  const bal=DB.loans.reduce((a,l)=>a+(+l.balance||0),0);
+  const mPay=DB.loans.reduce((a,l)=>a+(+l.monthly||0),0);
+  const intEst=DB.loans.reduce((a,l)=>a+(+l.balance||0)*(+l.rate||0)/100/12,0);
+  return `${pageHead(`고정비 · 대출`,`프로젝트에 붙지 않는 돈 — 급여·4대보험·임대료·세금 같은 반복 지출과 차입금 · 자금 흐름에 월별로 자동 반영`)}
+  <div class="kpi">
+   <div class="k"><div class="l">월 고정비 (환산)</div><div class="v num">${wonS(mEq)}</div></div>
+   <div class="k"><div class="l">대출 잔액 합계</div><div class="v num">${wonS(bal)}</div></div>
+   <div class="k"><div class="l">월 상환액 합계</div><div class="v num">${wonS(mPay)}</div></div>
+   <div class="k"><div class="l">추정 월 이자</div><div class="v num">${wonS(intEst)}</div></div>
+  </div>
+  <div class="card"><div class="hd"><h2>고정지출</h2><span class="sp"></span><button class="btn sm" onclick="editFix(null)">+ 고정지출</button></div>
+  <div class="tw"><table><thead><tr><th>항목</th><th>구분</th><th class="r">1회 금액</th><th>주기</th><th>첫 지급일</th><th>종료</th><th class="r">월 환산</th><th>메모</th></tr></thead><tbody>
+  ${DB.fixed.map(f=>`<tr class="click" onclick="editFix('${f.id}')"><td><b>${esc(f.name)}</b></td><td class="mini">${esc(f.kind||'-')}</td>
+  <td class="r num">${won(+f.amount||0)}</td><td class="mini">${esc(f.cycle||'매월')}</td><td class="num mini">${esc(f.start||'-')}</td><td class="num mini">${esc(f.end||'계속')}</td>
+  <td class="r num">${wonS(monthlyEquiv(f))}</td><td class="mini">${esc(f.memo||'')}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">등록된 고정지출이 없습니다. 급여·4대보험·임대료·부가세부터 넣어보세요.</td></tr>'}
+  </tbody></table></div></div>
+  <div class="card"><div class="hd"><h2>대출 · 차입금</h2><span class="sp"></span><button class="btn sm" onclick="editLoan(null)">+ 대출</button></div>
+  <div class="tw"><table><thead><tr><th>대출처</th><th>구분</th><th class="r">원금</th><th class="r">현재 잔액</th><th class="r">금리</th><th>상환방식</th><th class="r">월 상환액</th><th>상환일</th><th>만기</th><th class="r">추정 월이자</th></tr></thead><tbody>
+  ${DB.loans.map(l=>{ const md=l.maturity?dday(l.maturity):null;
+    return `<tr class="click" onclick="editLoan('${l.id}')"><td><b>${esc(l.lender||'-')}</b>${l.memo?`<div class="hint">${esc(l.memo)}</div>`:''}</td><td class="mini">${esc(l.kind||'-')}</td>
+  <td class="r num">${wonS(+l.principal||0)}</td><td class="r num"><b>${wonS(+l.balance||0)}</b></td><td class="r num">${l.rate?esc(l.rate)+'%':'-'}</td>
+  <td class="mini">${esc(l.repayType||'-')}</td><td class="r num">${wonS(+l.monthly||0)}</td><td class="mini">${l.payDay?'매월 '+esc(l.payDay)+'일':'-'}</td>
+  <td class="num mini">${esc(l.maturity||'-')} ${md!==null&&md<=90?ddayHtml(md):''}</td><td class="r num">${wonS((+l.balance||0)*(+l.rate||0)/100/12)}</td></tr>`; }).join('')||'<tr><td colspan="10" class="empty">등록된 대출이 없습니다.</td></tr>'}
+  </tbody></table></div></div>
+  <p class="hint">추정 월이자 = 잔액 × 금리 ÷ 12 (참고용). 실제 상환 스케줄은 은행 상환표 기준으로 월 상환액을 입력하세요. 만기일시 상환은 만기월에 잔액 전체가 자금 흐름에 잡힙니다.</p>`;
+}
+function editFix(id){
+  const isNew=!id;
+  const f=isNew?{id:uid('fx'),name:'',kind:'',amount:0,cycle:'매월',start:'',end:'',memo:''}:DB.fixed.find(x=>x.id===id);
+  if(!f) return;
+  openModal(isNew?'새 고정지출':'고정지출 편집', `<div class="fgrid">
+  <div class="f"><label>항목명</label><input id="x_n" value="${esc(f.name)}" placeholder="예: 7월 급여, 사무실 임대료"></div>
+  <div class="f"><label>구분</label><select id="x_k">${opt(DB.settings['고정지출 구분']||[],f.kind)}</select></div>
+  <div class="f"><label>1회 지급 금액 (원)</label><input id="x_a" type="number" value="${f.amount||''}"></div>
+  <div class="f"><label>주기</label><select id="x_c">${(DB.settings['지급 주기']||['매월']).map(c=>`<option ${f.cycle===c?'selected':''}>${esc(c)}</option>`).join('')}</select></div>
+  <div class="f"><label>첫 지급일 (주기·지급일 기준)</label><input id="x_s" type="date" value="${esc(f.start)}"></div>
+  <div class="f"><label>종료일 (비우면 계속)</label><input id="x_e" type="date" value="${esc(f.end)}"></div>
+  <div class="f full"><label>메모</label><input id="x_m" value="${esc(f.memo)}"></div>
+  </div><p class="hint" style="margin-top:8px">분기·반기·연1회는 첫 지급일의 달부터 주기대로 반복합니다 (예: 부가세 1/25 입력 → 1·4·7·10월).</p>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    if(!g('x_n').trim()){ toast('항목명을 입력하세요'); return false; }
+    Object.assign(f,{name:g('x_n').trim(),kind:g('x_k'),amount:+g('x_a')||0,cycle:g('x_c'),start:g('x_s'),end:g('x_e'),memo:g('x_m')});
+    if(isNew) DB.fixed.push(f); save(); render(); return true;
+  }, isNew?null:()=>{ DB.fixed=DB.fixed.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+function editLoan(id){
+  const isNew=!id;
+  const l=isNew?{id:uid('ln'),lender:'',kind:'',principal:0,balance:0,rate:'',start:'',maturity:'',repayType:'원리금균등',monthly:0,payDay:'',memo:''}:DB.loans.find(x=>x.id===id);
+  if(!l) return;
+  openModal(isNew?'새 대출':'대출 편집', `<div class="fgrid">
+  <div class="f"><label>대출처</label><input id="l_n" value="${esc(l.lender)}" placeholder="예: 기업은행"></div>
+  <div class="f"><label>구분</label><input id="l_k" list="l_kinds" value="${esc(l.kind)}"><datalist id="l_kinds"><option>운전자금</option><option>시설자금</option><option>정책자금</option><option>가수금·대표 차입</option></datalist></div>
+  <div class="f"><label>원금 (원)</label><input id="l_p" type="number" value="${l.principal||''}"></div>
+  <div class="f"><label>현재 잔액 (원)</label><input id="l_b" type="number" value="${l.balance||''}"></div>
+  <div class="f"><label>금리 (연 %)</label><input id="l_r" type="number" step="0.01" value="${esc(l.rate)}"></div>
+  <div class="f"><label>상환방식</label><select id="l_t">${(DB.settings['대출 상환방식']||[]).map(c=>`<option ${l.repayType===c?'selected':''}>${esc(c)}</option>`).join('')}</select></div>
+  <div class="f"><label>월 상환액 (원금+이자, 만기일시는 이자만)</label><input id="l_m" type="number" value="${l.monthly||''}"></div>
+  <div class="f"><label>매월 상환일</label><input id="l_d" type="number" min="1" max="31" value="${esc(l.payDay)}"></div>
+  <div class="f"><label>대출 시작일</label><input id="l_s" type="date" value="${esc(l.start)}"></div>
+  <div class="f"><label>만기일</label><input id="l_e" type="date" value="${esc(l.maturity)}"></div>
+  <div class="f full"><label>메모 (담보·보증·중도상환 조건 등)</label><input id="l_memo" value="${esc(l.memo)}"></div>
+  </div>`, ()=>{
+    const g=id=>document.getElementById(id).value;
+    Object.assign(l,{lender:g('l_n').trim(),kind:g('l_k'),principal:+g('l_p')||0,balance:+g('l_b')||0,rate:g('l_r'),repayType:g('l_t'),
+      monthly:+g('l_m')||0,payDay:g('l_d'),start:g('l_s'),maturity:g('l_e'),memo:g('l_memo')});
+    if(isNew) DB.loans.push(l); save(); render(); return true;
+  }, isNew?null:()=>{ DB.loans=DB.loans.filter(x=>x.id!==id); save(); render(); closeModal(); });
+}
+
 
 /* ── 인력분배 ── */
 let pplTab='asg';
@@ -1145,20 +1470,21 @@ function vExp(){
   <div class="card"><div class="hd"><h2>원가센터별 합계</h2></div><div class="bd" style="display:flex;gap:8px;flex-wrap:wrap">
    ${Object.entries(byCC).sort((a,b)=>b[1]-a[1]).map(([cc,v])=>`<div class="chip"><b class="num">${wonS(v)}</b>${esc(cc)}</div>`).join('')||'<span class="hint">지출이 없습니다.</span>'}
   </div></div>
-  <div class="card"><div class="tw"><table><thead><tr><th>날짜</th><th>프로젝트</th><th>구분</th><th>세부항목</th><th>거래처</th><th class="r">금액</th><th>결제</th><th>원가센터</th></tr></thead><tbody>
+  <div class="card"><div class="tw"><table><thead><tr><th>발생일</th><th>지급(예정)일</th><th>프로젝트</th><th>구분</th><th>세부항목</th><th>거래처</th><th class="r">금액</th><th>결제</th><th>원가센터</th></tr></thead><tbody>
   ${rows.map(e=>{ const p=projOf(e.code);
    return `<tr class="click" onclick="editExp('${e.id}')">
-   <td class="num">${esc(e.date||'-')}</td><td><b>${esc(p?pname(p):e.code)}</b></td>
+   <td class="num">${esc(e.date||'-')}</td><td class="num">${e.payDate?esc(e.payDate)+(e.payState!=='지급완료'?' '+ddayHtml(dday(e.payDate)):''):(e.payState==='지급완료'?'<span class="hint">-</span>':'<span class="b a">미정</span>')}</td><td><b>${esc(p?pname(p):e.code)}</b></td>
    <td class="mini">${esc(e.kind||'-')}</td><td class="mini">${esc(e.item||'-')}</td><td class="mini">${esc(e.vendor||'-')}</td>
    <td class="r num"><b>${won(e.amount)||'-'}</b></td><td class="mini">${esc(e.payState||'-')}</td>
-   <td class="mini">${esc(p?p.cc:'(미연결)')}</td></tr>`; }).join('') || '<tr><td colspan="8" class="empty">지출 내역이 없습니다.</td></tr>'}
-  </tbody><tfoot><tr><td colspan="5">합계</td><td class="r num">${won(total)||'₩0'}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
+   <td class="mini">${esc(p?p.cc:'(미연결)')}</td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">지출 내역이 없습니다.</td></tr>'}
+  </tbody><tfoot><tr><td colspan="6">합계</td><td class="r num">${won(total)||'₩0'}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
 }
 function editExp(id){
   const isNew=!id;
-  const e=isNew?{id:uid('e'),date:new Date().toISOString().slice(0,10),code:'',kind:'',item:'',vendor:'',amount:0,payState:'',evidence:'',memo:''}:DB.expenses.find(x=>x.id===id);
+  const e=isNew?{id:uid('e'),date:new Date().toISOString().slice(0,10),payDate:'',code:'',kind:'',item:'',vendor:'',amount:0,payState:'',evidence:'',memo:''}:DB.expenses.find(x=>x.id===id);
   openModal(isNew?'새 지출':'지출 편집', `<div class="fgrid">
-  <div class="f"><label>날짜</label><input id="f_date" type="date" value="${esc(e.date)}"></div>
+  <div class="f"><label>발생일 (발주·청구일)</label><input id="f_date" type="date" value="${esc(e.date)}"></div>
+  <div class="f"><label>지급(예정)일</label><input id="f_pd" type="date" value="${esc(e.payDate||'')}"></div>
   <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),e.code)}</select></div>
   <div class="f"><label>지출구분</label><select id="f_kind">${opt(DB.settings['지출구분']||[],e.kind)}</select></div>
   <div class="f"><label>금액 (원)</label><input id="f_amt" type="number" value="${e.amount||''}"></div>
@@ -1169,7 +1495,7 @@ function editExp(id){
   <div class="f full"><label>메모</label><input id="f_memo" value="${esc(e.memo)}"></div>
   </div>`, ()=>{
     const g=id=>document.getElementById(id).value;
-    Object.assign(e,{date:g('f_date'),code:g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
+    Object.assign(e,{date:g('f_date'),payDate:g('f_pd'),code:g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
       vendor:g('f_ven'),payState:g('f_pay'),evidence:g('f_ev'),memo:g('f_memo')});
     if(isNew) DB.expenses.push(e); save(); render(); return true;
   }, isNew?null:()=>{ DB.expenses=DB.expenses.filter(x=>x.id!==id); save(); render(); closeModal(); });
@@ -1349,7 +1675,9 @@ function vSet(){
   <tr><td><b>예산 대비 지출</b></td><td>원가센터 × 지출구분별 예산 라인</td><td>확정액/지급액/집행률/잔여, 수익성 외부지출예산</td></tr>
   <tr><td><b>지출 장부</b></td><td>실제 지출내역 (하위 코드 기준, 결제상태 포함)</td><td>프로젝트명/원가센터/예산 라인 자동 합산</td></tr>
   <tr><td><b>수익성 결론</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
-  <tr><td><b>계약·입금</b></td><td>클라이언트, 계약금, 선금/중도금/잔금</td><td>입금합계, 미수금</td></tr>
+  <tr><td><b>자금 흐름</b></td><td>기초 잔액(기준월·금액)</td><td>입금 회차 + 지출 + 고정비 + 대출을 월별 합산, 월말 잔액</td></tr>
+  <tr><td><b>계약·입금</b></td><td>계약금액, VAT, 회차별 금액·예정일·계산서 발행일·실입금일</td><td>입금완료·미수·지연·다음 입금, 자금 흐름</td></tr>
+  <tr><td><b>고정비·대출</b></td><td>급여·임대료·세금 등 반복 지출, 대출 잔액·금리·월 상환액·만기</td><td>월 환산 고정비, 자금 흐름 월별 유출</td></tr>
   <tr><td><b>결정 기록</b></td><td>중단/취소 사유, 결정사항</td><td>프로젝트명 자동 연결 — 삭제 대신 기록</td></tr>
   </tbody></table></div></div>`;
 }
