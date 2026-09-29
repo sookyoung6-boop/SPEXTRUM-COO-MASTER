@@ -790,9 +790,9 @@ function projForm(p){
   <div class="f"><label>비고</label><input id="f_note" value="${esc(p.note)}"></div>
   </div>`;
 }
-function editProj(code){
+function editProj(code, draft){
   const isNew=!code;
-  const p = isNew ? {_new:true,code:'',cat:'',cc:'',parent:'',sub:'',type:'',goal:'',owner:'',status:'진행중',stage:'기획',pri:'B',start:'',due:'',milestone:'',action:'',decision:'',risk:'',revenue:0,contract:'',link:'',note:''} : projOf(code);
+  const p = draft ? draft : isNew ? {_new:true,code:'',cat:'',cc:'',parent:'',sub:'',type:'',goal:'',owner:'',status:'진행중',stage:'기획',pri:'B',start:'',due:'',milestone:'',action:'',decision:'',risk:'',revenue:0,contract:'',link:'',note:''} : projOf(code);
   if(!p) return;
   const pr = !isNew ? projProf(p) : null;
   const rel = !isNew ? `
@@ -806,7 +806,12 @@ function editProj(code){
    <ul class="mini">${DB.decisions.filter(d=>d.code===code).map(d=>`<li><b>${esc(d.status)}</b> · ${nl(d.issue)} ${d.decision?'→ '+nl(d.decision):''}</li>`).join('')||'<li class="hint">없음</li>'}</ul></div>
    <div class="subsec"><h4>지출 (${won(DB.expenses.filter(e=>e.code===code).reduce((a,e)=>a+(+e.amount||0),0))||'₩0'})</h4>
    <ul class="mini">${DB.expenses.filter(e=>e.code===code).map(e=>`<li>${esc(e.kind)} · ${esc(e.item)} <b class="num">${won(e.amount)}</b></li>`).join('')||'<li class="hint">없음</li>'}</ul></div>`:'';
-  openModal(`${isNew?'새 프로젝트':esc(pname(p))+(pr?` &nbsp;${profBadge(pr.state)}`:'')}`, projForm(p)+rel, ()=>{
+  const copyOpt = draft ? `<div class="subsec"><h4>함께 복사</h4>
+   <label class="mini" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="cp_fin" ${draft._srcFin?'checked':''} ${draft._srcFin?'':'disabled'}>
+   계약·입금 구조 (클라이언트·계약금액·VAT·회차 비율 — 날짜와 입금 상태는 비움)</label>
+   <p class="hint" style="margin-top:6px">주간 할 일·결정 기록·지출은 복사하지 않습니다.</p></div>` : '';
+  const copyBtn = !isNew ? `<div class="subsec" style="text-align:right"><button class="btn ghost sm" onclick="copyProj('${esc(code)}')">⧉ 이 프로젝트 복사</button></div>` : '';
+  openModal(`${draft?'프로젝트 복사 · 원본 '+esc(draft._srcName):isNew?'새 프로젝트':esc(pname(p))+(pr?` &nbsp;${profBadge(pr.state)}`:'')}`, projForm(p)+copyOpt+rel+copyBtn, ()=>{
     const g=id=>document.getElementById(id).value.trim();
     const nc=g('f_code'); if(!nc){ toast('코드를 입력하세요'); return false; }
     if(isNew && projOf(nc)){ toast('이미 있는 코드입니다'); return false; }
@@ -816,10 +821,35 @@ function editProj(code){
       milestone:g('f_ms'),action:document.getElementById('f_action').value,decision:document.getElementById('f_dec').value,
       risk:document.getElementById('f_risk').value,revenue:+g('f_rev')||0,contract:g('f_contract'),link:g('f_link'),note:g('f_note')});
     if(isNew){ delete t._new; DB.projects.push(t);
-      DB.finance.push({code:nc,client:'',total:0,contract:'',vatMode:'미확인',installments:[],tax:'',note:''}); }
+      const src = draft && document.getElementById('cp_fin')?.checked ? DB.finance.find(f=>f.code===draft._srcCode) : null;
+      if(src){
+        DB.finance.push({code:nc,client:src.client||'',total:+src.total||0,contract:'',vatMode:src.vatMode||'미확인',tax:'',note:'',
+          installments:(src.installments||[]).map(i=>({id:uid('i'),label:i.label,amount:+i.amount||0,plan:'',invoice:'',paid:'',status:'예정'}))});
+      } else DB.finance.push({code:nc,client:'',total:0,contract:'',vatMode:'미확인',installments:[],tax:'',note:''});
+      toast(draft?'복사본을 만들었습니다':'프로젝트를 추가했습니다'); }
     save(); render(); return true;
   }, isNew?null:()=>{ if(!confirm('삭제 대신 상태를 "중단/취소"로 남기는 걸 권장합니다.\n정말 삭제할까요?')) return;
       DB.projects=DB.projects.filter(x=>x.code!==code); save(); render(); closeModal(); });
+}
+
+/* 프로젝트 복사: 코드 접두어 기준으로 다음 번호 제안 */
+function nextCode(code){
+  const m=String(code).match(/^(.*?)(\d+)$/);
+  if(!m) { let k=2; while(projOf(code+'-'+k)) k++; return code+'-'+k; }
+  const [_,pre,num]=m, w=num.length;
+  const nums=DB.projects.map(p=>p.code).filter(c=>c.startsWith(pre)).map(c=>+(c.slice(pre.length).match(/^\d+$/)||[0])[0]);
+  let n=Math.max(+num,...nums)+1;
+  while(projOf(pre+String(n).padStart(w,'0'))) n++;
+  return pre+String(n).padStart(w,'0');
+}
+function copyProj(code){
+  const src=projOf(code); if(!src) return;
+  closeModal();
+  const d=JSON.parse(JSON.stringify(src));
+  Object.assign(d,{_new:true, _srcCode:code, _srcName:pname(src), _srcFin:!!DB.finance.find(f=>f.code===code&&(+f.total||(f.installments||[]).length)),
+    code:nextCode(code), sub:(src.sub||src.parent||'')+' (복사)', status:'대기', stage:'기획',
+    start:'', due:'', milestone:'', action:'', decision:'', risk:'', contract:'', link:''});
+  setTimeout(()=>editProj(null,d),0);
 }
 
 /* ── 주간액션 ── */
