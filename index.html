@@ -240,6 +240,16 @@ function migrate(){
   DB.settings['고정지출 구분'] = DB.settings['고정지출 구분'] || ['급여','4대보험','임대료','관리비','세금','보험료','통신·구독','기타'];
   DB.settings['지급 주기'] = DB.settings['지급 주기'] || ['매월','분기','반기','연1회','1회'];
   DB.settings['대출 상환방식'] = DB.settings['대출 상환방식'] || ['원리금균등','원금균등','만기일시','기타'];
+  // v16: 수출 주문 + '수출' 원가센터
+  DB.exports = DB.exports || [];
+  DB.fxRates = DB.fxRates || {USD:1380, CNY:190, JPY:9.2, EUR:1500};
+  DB.settings['통화'] = DB.settings['통화'] || ['USD','CNY','JPY','EUR','KRW'];
+  DB.settings['수출 상태'] = DB.settings['수출 상태'] || ['주문접수','생산중','선적완료','종결','취소'];
+  DB.settings['수출 증빙'] = DB.settings['수출 증빙'] || ['미확보','수출신고필증','외화입금증명서','둘 다 확보'];
+  if(DB.ccList && !DB.ccList.includes('수출')) DB.ccList.push('수출');
+  if(DB.settings['원가센터'] && !DB.settings['원가센터'].includes('수출')) DB.settings['원가센터'].push('수출');
+  const mcc=DB.settings['인력 매트릭스 원가센터']; if(mcc && !mcc.includes('수출')) mcc.push('수출');
+  (DB.expenses||[]).forEach(e=>{ if(e.exportId===undefined) e.exportId=''; });
   DB.fixed = DB.fixed || [];
   DB.loans = DB.loans || [];
   DB.cashStart = DB.cashStart || {month:'', amount:0};
@@ -470,7 +480,35 @@ function budgetsOf(cc){ return DB.budgets.filter(b=>b.cc===cc); }
 function ccExtBudget(cc){ const bl=budgetsOf(cc);
   return bl.length ? bl.reduce((a,b)=>a+(+b.amount||0),0) : (profitInput(cc).extBudget||0); }
 const isPaid = e => e.payState==='지급완료';
-function ccExpenses(cc){ return DB.expenses.filter(e=>{ const p=projOf(e.code); return p&&p.cc===cc; }); }
+/* ═══ 수출 주문 엔진 ═══ */
+const exportOf = id => DB.exports.find(o=>o.id===id);
+const fxRate = cur => cur==='KRW' ? 1 : (+(DB.fxRates||{})[cur]||0);
+const exLabel = o => (o.buyer||'바이어 미입력')+(o.item?' · '+o.item:'');
+function exportCalc(o){
+  const rate=fxRate(o.currency), wh=Math.min(Math.max(+o.withholdRate||0,0),100)/100;
+  const rows=o.installments||[];
+  const fxTotal=+o.fxAmount||0, fxSched=rows.reduce((a,r)=>a+(+r.fx||0),0), fxUn=Math.max(0,fxTotal-fxSched);
+  const est=fx=>fx*rate*(1-wh);
+  let gross=0, netExp=0, received=0, fxDiff=0, missingKrw=0;
+  rows.forEach(r=>{ const fx=+r.fx||0;
+    if(r.status==='입금완료'){
+      if(+r.krw>0){ received+=+r.krw; netExp+=+r.krw; gross+=wh<1?(+r.krw)/(1-wh):+r.krw; fxDiff+=(+r.krw)-est(fx); }
+      else { missingKrw++; received+=est(fx); netExp+=est(fx); gross+=fx*rate; }
+    } else { netExp+=est(fx); gross+=fx*rate; } });
+  netExp+=est(fxUn); gross+=fxUn*rate;
+  const open=rows.filter(r=>r.status!=='입금완료');
+  const late=open.filter(r=>r.plan&&dday(r.plan)<0);
+  const next=[...open].filter(r=>r.plan).sort((a,b)=>a.plan.localeCompare(b.plan))[0]||null;
+  const direct=DB.expenses.filter(e=>e.exportId===o.id).reduce((a,e)=>a+(+e.amount||0),0);
+  return {rate, wh, fxTotal, fxSched, fxUn, gross, netExp, received, due:netExp-received, whKrw:gross-netExp, fxDiff, missingKrw,
+    open, late, next, noDate:open.filter(r=>!r.plan), direct, margin:gross-direct, cancelled:o.status==='취소'};
+}
+const liveExports = () => DB.exports.filter(o=>o.status!=='취소');
+function exportsOfCC(cc){ return liveExports().filter(o=>(o.cc||'수출')===cc); }
+/* 지출 → 원가센터: 프로젝트 또는 수출 주문 경유 */
+function expCC(e){ if(e.exportId){ const o=exportOf(e.exportId); return o?(o.cc||'수출'):''; } const p=projOf(e.code); return p?p.cc:''; }
+function expTarget(e){ if(e.exportId){ const o=exportOf(e.exportId); return o?'[수출] '+exLabel(o):'(삭제된 수출 주문)'; } const p=projOf(e.code); return p?pname(p):(e.code||'(미연결)'); }
+function ccExpenses(cc){ return DB.expenses.filter(e=>expCC(e)===cc); }
 /* 예산 대비 집행: 지출구분 라인별 예산/확정(전체 입력분)/지급(지급완료분) */
 function budLines(cc){
   const map={};
@@ -485,7 +523,8 @@ function budLines(cc){
 function ccCalc(cc){
   const pi = profitInput(cc);
   const projs = DB.projects.filter(p=>p.cc===cc);
-  const revenue = projs.reduce((a,p)=>a+(+p.revenue||0),0);
+  const exRevenue = exportsOfCC(cc).reduce((a,o)=>a+exportCalc(o).gross,0);
+  const revenue = projs.reduce((a,p)=>a+(+p.revenue||0),0) + exRevenue;
   const laborDays = asgOf(cc).reduce((a,x)=>a+(+x.days||0),0);
   const labor = asgOf(cc).reduce((a,x)=>a + (+x.days||0)*dailyRateOf(x.person), 0);
   const extBudget = ccExtBudget(cc);
@@ -512,7 +551,7 @@ function ccCalc(cc){
   else if(estRate<th.low) state='저마진';
   else if(estRate<th.warn) state='주의';
   else state='정상';
-  return {cc, pi, count:projs.length, revenue, labor, laborDays, extBudget, reserve, totalBudget, estMargin, estRate,
+  return {cc, pi, count:projs.length+exportsOfCC(cc).length, revenue, exRevenue, labor, laborDays, extBudget, reserve, totalBudget, estMargin, estRate,
     committed, paid, fcExt, fcMargin, fcRate, actExt, actCost, actMargin, actRate, lines, overLines, state};
 }
 function allCC(){
@@ -577,9 +616,21 @@ function cashEvents(){
       ev.push({ym:pm<cur?cur:pm,dir:'in',cat:'입금',done:false,carried:pm<cur,amount:amt,label:pname(p)+' · '+i.label+(i.status==='청구완료'?' (청구완료)':''),ref:{t:'fin',id:f.code},date:i.plan});
     });
   });
+  liveExports().forEach(o=>{ const c=exportCalc(o);
+    (o.installments||[]).forEach(r=>{
+      const fx=+r.fx||0; if(!fx) return;
+      const lab='[수출] '+exLabel(o)+' · '+(r.label||'입금')+' ('+o.currency+' '+fx.toLocaleString()+')';
+      if(r.status==='입금완료'){ if(r.paid) ev.push({ym:ymOf(r.paid),dir:'in',cat:'입금',done:true,amount:+r.krw>0?+r.krw:fx*c.rate*(1-c.wh),label:lab,ref:{t:'xo',id:o.id},date:r.paid}); return; }
+      const amt=fx*c.rate*(1-c.wh);
+      if(!r.plan){ unplaced.push({dir:'in',label:lab,amount:amt,ref:{t:'xo',id:o.id}}); return; }
+      const pm=ymOf(r.plan);
+      ev.push({ym:pm<cur?cur:pm,dir:'in',cat:'입금',done:false,carried:pm<cur,amount:amt,label:lab+' · 기준환율 환산',ref:{t:'xo',id:o.id},date:r.plan});
+    });
+    if(c.fxUn>0) unplaced.push({dir:'in',label:'[수출] '+exLabel(o)+' · 회차 미배정',amount:c.fxUn*c.rate*(1-c.wh),ref:{t:'xo',id:o.id}});
+  });
   DB.expenses.forEach(e=>{
-    const amt=+e.amount||0; if(!amt) return; const p=projOf(e.code);
-    const label=(p?pname(p):e.code||'(미연결)')+' · '+(e.item||e.kind||'지출')+(e.vendor?' · '+e.vendor:'');
+    const amt=+e.amount||0; if(!amt) return;
+    const label=expTarget(e)+' · '+(e.item||e.kind||'지출')+(e.vendor?' · '+e.vendor:'');
     const d=e.payDate||e.date; const done=e.payState==='지급완료';
     if(!d){ if(!done) unplaced.push({dir:'out',label,amount:amt,ref:{t:'exp',id:e.id}}); return; }
     const m=ymOf(d);
@@ -641,6 +692,7 @@ const VIEWS=[
  // 돈 — 들어오고, 계획하고, 나가고, 남는 순서
  {id:'cash', name:'자금 흐름', ic:'⇄', grp:'돈'},
  {id:'fin', name:'계약·입금', ic:'▦', grp:'돈'},
+ {id:'xo', name:'수출 주문', ic:'✈', grp:'돈'},
  {id:'bud', name:'예산 대비 지출', ic:'◧', grp:'돈'},
  {id:'exp', name:'지출 장부', ic:'▨', grp:'돈'},
  {id:'fix', name:'고정비·대출', ic:'▣', grp:'돈'},
@@ -678,7 +730,7 @@ function stripHtml(){
   const lowm=ccAll.filter(c=>['저마진','적자'].includes(c.state));
   const overBud=ccAll.reduce((a,c)=>a+c.overLines,0);
   const overload=DB.people.filter(p=>personCalc(p).state==='과부하');
-  const lateIn=DB.finance.filter(f=>projOf(f.code)).reduce((a,f)=>a+finCalc(f).late.length,0);
+  const lateIn=DB.finance.filter(f=>projOf(f.code)).reduce((a,f)=>a+finCalc(f).late.length,0) + liveExports().reduce((a,o)=>a+exportCalc(o).late.length,0);
   const c=(n,lbl,cls)=>`<div class="chip ${n>0?cls:''}"><b class="num">${n}</b>${lbl}</div>`;
   return `<div id="strip">
     <div class="chip"><b class="num">${all.length}</b>전체</div>
@@ -692,7 +744,7 @@ function stripHtml(){
 function render(){
   renderNav();
   const m=document.getElementById('main');
-  m.innerHTML = stripHtml() + ({dash:vDash,proj:vProj,week:vWeek,dec:vDec,fin:vFin,ppl:vPpl,exp:vExp,prof:vProf,bud:vBud,cash:vCash,fix:vFix,set:vSet}[CUR])();
+  m.innerHTML = stripHtml() + ({dash:vDash,proj:vProj,week:vWeek,dec:vDec,fin:vFin,ppl:vPpl,exp:vExp,prof:vProf,bud:vBud,cash:vCash,fix:vFix,xo:vExport,set:vSet}[CUR])();
 }
 
 /* ── 대시보드 ── */
@@ -1233,6 +1285,8 @@ function vCash(){
   const {rows, unplaced}=cashSeries(cf.from, cf.n);
   const cur=rows.find(r=>r.ym===thisYM());
   const lateList=[]; DB.finance.forEach(f=>{ const p=projOf(f.code); if(!p) return; finCalc(f).late.forEach(i=>lateList.push({f,p,i})); });
+  liveExports().forEach(o=>{ const c=exportCalc(o); c.late.forEach(r=>lateList.push({xo:o, p:{parent:'[수출]',sub:exLabel(o)}, f:{code:'',client:(o.country||'')},
+    i:{label:r.label, plan:r.plan, amount:(+r.fx||0)*c.rate*(1-c.wh), status:r.status}})); });
   const cs=DB.cashStart||{};
   const cell=(ym,v,kind,style='')=>`<td class="r num" style="cursor:pointer;${style}" onclick="cashDetail('${ym}','${kind}')">${v?wonS(v):'<span style="opacity:.35">·</span>'}</td>`;
   return `${pageHead(`자금 흐름`,`들어올 돈(입금 회차) · 나갈 돈(프로젝트 지출·고정지출·대출 상환)을 월별로 합칩니다 · 지난 달에 못 받은/못 낸 예정분은 이번 달로 이월 · 셀을 누르면 내역`)}
@@ -1264,12 +1318,12 @@ function vCash(){
    </tbody></table></div></div>
   ${cs.month?'':'<p class="hint" style="margin-top:-8px;margin-bottom:14px">월말 잔액을 보려면 오른쪽 위 <b>기초잔액</b>에 기준 월과 그 달 1일 통장 잔액을 넣으세요.</p>'}
   ${lateList.length?`<div class="card"><div class="hd"><h2>입금 지연</h2><span class="hint">예정일이 지났는데 입금완료가 아닌 회차 — 이번 달 입금 예정으로 이월 계산 중</span></div>
-   <div class="tw"><table><tbody>${lateList.sort((a,b)=>a.i.plan.localeCompare(b.i.plan)).map(({f,p,i})=>`<tr class="click" onclick="editFin('${esc(f.code)}')">
+   <div class="tw"><table><tbody>${lateList.sort((a,b)=>a.i.plan.localeCompare(b.i.plan)).map(({f,p,i,xo})=>`<tr class="click" onclick="${xo?`editExport('${xo.id}')`:`editFin('${esc(f.code)}')`}">
    <td><b>${esc(pname(p))}</b><div class="hint">${esc(f.client||'')}</div></td><td>${esc(i.label)}</td>
    <td class="num">${esc(i.plan)} ${ddayHtml(dday(i.plan))}</td><td class="r num"><b>${wonS(+i.amount||0)}</b></td>
    <td>${statusBadge(i.status)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
   ${unplaced.length?`<div class="card"><div class="hd"><h2>일정 미정</h2><span class="hint">날짜가 없어 월별 흐름에서 빠진 금액 — 날짜를 넣으면 반영됩니다</span></div>
-   <div class="tw"><table><tbody>${unplaced.map(u=>`<tr class="click" onclick="${u.ref.t==='fin'?`editFin('${esc(u.ref.id)}')`:`editExp('${esc(u.ref.id)}')`}">
+   <div class="tw"><table><tbody>${unplaced.map(u=>`<tr class="click" onclick="${u.ref.t==='fin'?`editFin('${esc(u.ref.id)}')`:u.ref.t==='xo'?`editExport('${esc(u.ref.id)}')`:`editExp('${esc(u.ref.id)}')`}">
    <td>${u.dir==='in'?'<span class="b g">입금</span>':'<span class="b rd">지출</span>'}</td><td>${esc(u.label)}</td><td class="r num"><b>${wonS(u.amount)}</b></td></tr>`).join('')}</tbody></table></div></div>`:''}`;
 }
 function cashDetail(ym, kind){
@@ -1277,11 +1331,164 @@ function cashDetail(ym, kind){
   const f={inDone:e=>e.dir==='in'&&e.done, inPlan:e=>e.dir==='in'&&!e.done, exp:e=>e.cat==='프로젝트 지출', fix:e=>e.cat==='고정지출', loan:e=>e.cat==='대출 상환'}[kind]||(()=>true);
   const items=r.items.filter(f).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const title={inDone:'입금 완료',inPlan:'입금 예정',exp:'프로젝트 지출',fix:'고정지출',loan:'대출 상환'}[kind]||'';
-  const go_=it=>({fin:`closeModal();editFin('${esc(it.ref.id)}')`,exp:`closeModal();editExp('${esc(it.ref.id)}')`,fix:`closeModal();editFix('${esc(it.ref.id)}')`,loan:`closeModal();editLoan('${esc(it.ref.id)}')`}[it.ref.t]);
+  const go_=it=>({xo:`closeModal();editExport('${esc(it.ref.id)}')`,fin:`closeModal();editFin('${esc(it.ref.id)}')`,exp:`closeModal();editExp('${esc(it.ref.id)}')`,fix:`closeModal();editFix('${esc(it.ref.id)}')`,loan:`closeModal();editLoan('${esc(it.ref.id)}')`}[it.ref.t]);
   openModal(esc(ym)+' · '+title, `<div class="tw"><table><tbody>
   ${items.map(it=>`<tr class="click" onclick="${go_(it)}"><td class="num mini">${esc(it.date||'-')}</td><td class="mini">${esc(it.label)}${it.carried?' <span class="b a">이월</span>':''}${it.cat==='프로젝트 지출'?(it.done?' <span class="b g">지급완료</span>':' <span class="b gy">예정</span>'):''}</td>
   <td class="r num"><b>${won(Math.round(it.amount))}</b></td></tr>`).join('')||'<tr><td class="empty">내역이 없습니다.</td></tr>'}
   </tbody>${items.length?`<tfoot><tr><td colspan="2">합계</td><td class="r num">${won(Math.round(items.reduce((a,i)=>a+i.amount,0)))}</td></tr></tfoot>`:''}</table></div>`, null);
+}
+
+/* ── 수출 주문 ── */
+let xoF={only:''};
+function xoDots(o){ return (o.installments||[]).map(r=>{
+  const c=r.status==='입금완료'?'var(--ok)':(r.plan&&dday(r.plan)<0?'var(--danger)':'var(--line)');
+  return `<span title="${esc(r.label)}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:3px"></span>`; }).join(''); }
+function vExport(){
+  let rows=[...DB.exports].sort((a,b)=>(b.orderDate||'').localeCompare(a.orderDate||''));
+  if(xoF.only==='open') rows=rows.filter(o=>o.status!=='취소'&&exportCalc(o).due>1);
+  if(xoF.only==='late') rows=rows.filter(o=>o.status!=='취소'&&exportCalc(o).late.length);
+  if(xoF.only==='doc') rows=rows.filter(o=>o.status!=='취소'&&(!o.docs||o.docs==='미확보'));
+  const live=liveExports(), cs=live.map(exportCalc);
+  const yr=String(new Date().getFullYear());
+  const yGross=live.filter(o=>(o.orderDate||'').startsWith(yr)).reduce((a,o)=>a+exportCalc(o).gross,0);
+  const due=cs.reduce((a,c)=>a+Math.max(0,c.due),0), lateN=cs.reduce((a,c)=>a+c.late.length,0);
+  const wh=cs.reduce((a,c)=>a+c.whKrw,0);
+  const docGap=live.filter(o=>!o.docs||o.docs==='미확보').length;
+  const R=DB.fxRates||{};
+  return `${pageHead(`수출 주문`,`단발성 수출은 주문 1건 = 1줄 · 입금 예정은 통화별 기준환율로 환산, 입금 완료는 통장에 찍힌 원화 그대로 · 모든 주문은 '수출' 원가센터로 합산`)}
+  <div class="kpi">
+   <div class="k"><div class="l">${yr}년 수출 매출 (원화)</div><div class="v num">${wonS(yGross)}</div></div>
+   <div class="k"><div class="l">받을 돈 (원화 추정)</div><div class="v num">${wonS(due)}</div></div>
+   <div class="k ${lateN?'rd':''}"><div class="l">입금 지연</div><div class="v num">${lateN}건</div></div>
+   <div class="k"><div class="l">해외 원천징수 (추정)</div><div class="v num">${wonS(wh)}</div></div>
+   <div class="k ${docGap?'am':''}"><div class="l">증빙 미확보</div><div class="v num">${docGap}건</div></div>
+  </div>
+  <div class="card"><div class="hd"><h2>기준환율</h2><span class="hint">입금 예정분 환산용 · 한 달에 한 번 정도 갱신</span></div>
+  <div class="bd" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+   ${['USD','CNY','JPY','EUR'].map(c=>`<label class="mini" style="display:flex;align-items:center;gap:5px"><b>${c}</b>
+    <input type="number" step="0.01" value="${R[c]||''}" onchange="DB.fxRates['${c}']=+this.value||0;save();render()"
+     style="width:92px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;text-align:right" class="num">원</label>`).join('')}
+  </div></div>
+  <div class="filters"><div class="seg">
+   <button class="${!xoF.only?'on':''}" onclick="xoF.only='';render()">전체</button>
+   <button class="${xoF.only==='open'?'on':''}" onclick="xoF.only='open';render()">미수 있음</button>
+   <button class="${xoF.only==='late'?'on':''}" onclick="xoF.only='late';render()">지연</button>
+   <button class="${xoF.only==='doc'?'on':''}" onclick="xoF.only='doc';render()">증빙 미확보</button>
+  </div><span style="flex:1"></span><button class="btn" onclick="editExport(null)">+ 수출 주문</button></div>
+  <div class="card"><div class="tw"><table><thead><tr><th>주문일</th><th>바이어 · 품목</th><th class="r">외화</th><th class="r">원화</th><th>입금</th>
+   <th>다음 입금</th><th class="r">직접비</th><th class="r">마진</th><th>상태</th><th>증빙</th></tr></thead><tbody>
+  ${rows.map(o=>{ const c=exportCalc(o);
+    return `<tr class="click" onclick="editExport('${o.id}')" style="${c.cancelled?'opacity:.5':''}">
+    <td class="num mini">${esc(o.orderDate||'-')}</td>
+    <td><b>${esc(o.buyer||'-')}</b>${o.country?` <span class="hint">${esc(o.country)}</span>`:''}<div class="hint">${esc(o.item||'')}</div></td>
+    <td class="r num">${esc(o.currency||'')} ${(+o.fxAmount||0).toLocaleString()}${c.wh?`<div class="hint">원천 ${Math.round(c.wh*100)}%</div>`:''}</td>
+    <td class="r num"><b>${wonS(c.gross)}</b>${c.received?`<div class="hint">입금 ${wonS(c.received)}</div>`:''}</td>
+    <td style="white-space:nowrap">${xoDots(o)||'<span class="hint">-</span>'}${c.missingKrw?' <span class="b a">원화 미입력</span>':''}</td>
+    <td class="mini">${c.next?`<span class="num">${esc(c.next.plan)}</span> ${ddayHtml(dday(c.next.plan))}`:(c.noDate.length?'<span class="b a">예정일 없음</span>':'<span class="hint">-</span>')}</td>
+    <td class="r num">${c.direct?wonS(c.direct):'<span class="hint">-</span>'}</td>
+    <td class="r num" style="${c.margin<0?'color:var(--danger);font-weight:800':''}">${c.direct?(c.margin<0?'−':'')+wonS(Math.abs(c.margin)):'<span class="hint">-</span>'}</td>
+    <td>${statusBadge(o.status||'주문접수')}</td>
+    <td class="mini">${!o.docs||o.docs==='미확보'?'<span class="b a">미확보</span>':esc(o.docs)}</td></tr>`; }).join('')||'<tr><td colspan="10" class="empty">수출 주문이 없습니다.</td></tr>'}
+  </tbody></table></div></div>
+  <p class="hint">원화 = 매출 기준(원천징수 전). 입금 완료분은 실제 원화 입금액으로, 예정분은 기준환율로 계산합니다. 마진 = 원화 매출 − 이 주문에 연결된 지출(지출 장부에서 '수출 주문'으로 연결). 공통 비용·담당자 인건비는 '수출' 원가센터로 잡혀 수익성 탭에서 합산됩니다.</p>`;
+}
+let xoRows=[], xoCur='USD';
+function xoReadRows(){ xoRows=xoRows.map((r,k)=>{ const g=id=>document.getElementById(id); if(!g('xr_l'+k)) return r;
+  return {...r,label:g('xr_l'+k).value.trim()||r.label,fx:+g('xr_f'+k).value||0,plan:g('xr_p'+k).value,paid:g('xr_d'+k).value,krw:+g('xr_k'+k).value||0}; }); }
+function xoRender(){
+  const box=document.getElementById('xo_rows'); if(!box) return;
+  const cur=document.getElementById('o_cur')?.value||'USD', rate=fxRate(cur), wh=(+document.getElementById('o_wh')?.value||0)/100;
+  box.innerHTML=xoRows.map((r,k)=>`<div style="border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:8px;background:#FAFBFA">
+   <div class="fgrid">
+    <div class="f"><label>회차</label><input id="xr_l${k}" list="xr_labels" value="${esc(r.label)}"></div>
+    <div class="f"><label>외화 금액 (${esc(cur)})</label><input id="xr_f${k}" type="number" step="0.01" value="${r.fx||''}" oninput="xoReadRows();xoHint()"></div>
+    <div class="f"><label>입금 예정일</label><input id="xr_p${k}" type="date" value="${esc(r.plan)}"></div>
+    <div class="f"><label>실제 입금일</label><input id="xr_d${k}" type="date" value="${esc(r.paid)}"></div>
+    <div class="f full"><label>실제 원화 입금액 (통장에 찍힌 금액)</label><input id="xr_k${k}" type="number" value="${r.krw||''}" placeholder="입금되면 입력" oninput="xoReadRows();xoHint()">
+     <span class="hint num" id="xr_h${k}"></span></div>
+   </div>
+   <div style="text-align:right;margin-top:6px"><button class="btn ghost sm" onclick="xoReadRows();xoRows.splice(${k},1);xoRender()">이 회차 삭제</button></div></div>`).join('')
+   || '<p class="hint">회차가 없습니다. 일시불이면 아래 [일시불]을 누르세요.</p>';
+  xoHint();
+}
+function xoHint(){
+  const cur=document.getElementById('o_cur')?.value||'USD', rate=fxRate(cur), wh=(+document.getElementById('o_wh')?.value||0)/100;
+  xoRows.forEach((r,k)=>{ const el=document.getElementById('xr_h'+k); if(!el) return;
+    const est=(+r.fx||0)*rate*(1-wh);
+    if(+r.krw>0 && +r.fx>0){ const eff=(+r.krw)/((+r.fx)*(1-wh)); const diff=(+r.krw)-est;
+      el.innerHTML=`실효환율 ${eff.toFixed(2)}원 · 기준환율 대비 <b style="color:${diff<0?'var(--danger)':'var(--ok)'}">${diff<0?'−':'+'}${won(Math.abs(Math.round(diff)))}</b>`; }
+    else el.textContent = r.fx ? `기준환율 환산 예상 ${won(Math.round(est))}${wh?' (원천징수 차감)':''}` : ''; });
+  const sum=xoRows.reduce((a,r)=>a+(+r.fx||0),0), tot=+(document.getElementById('o_fx')?.value)||0, h=document.getElementById('xo_sum');
+  if(h) h.innerHTML=`회차 합계 <b class="num">${sum.toLocaleString()}</b> / 주문 금액 <b class="num">${tot.toLocaleString()}</b> ${cur}
+   ${tot&&Math.abs(sum-tot)>0.009?`<span class="b ${sum>tot?'rd':'a'}" style="margin-left:6px">${sum>tot?'초과':'미배정'} ${Math.abs(tot-sum).toLocaleString()}</span>`:(tot?'<span class="b g" style="margin-left:6px">일치</span>':'')}`;
+}
+function xoPreset(parts){
+  const tot=+(document.getElementById('o_fx')?.value)||0; if(!tot){ toast('주문 금액을 먼저 입력하세요'); return; }
+  xoReadRows();
+  const done=xoRows.filter(r=>r.paid);
+  const rest=tot-done.reduce((a,r)=>a+(+r.fx||0),0);
+  const names=parts.length===1?['일시불']:['선금','잔금'];
+  let acc=0;
+  const fresh=parts.map((pc,k)=>{ const v=k===parts.length-1?+(rest-acc).toFixed(2):+(rest*pc/100).toFixed(2); acc+=v;
+    return {id:uid('xr'),label:names[k],fx:v,plan:'',paid:'',krw:0,status:'예정'}; });
+  xoRows=[...done,...fresh]; xoRender();
+}
+function editExport(id){
+  const isNew=!id;
+  const o=isNew?{id:uid('xo'),orderDate:new Date().toISOString().slice(0,10),buyer:'',country:'',item:'',currency:'USD',fxAmount:0,withholdRate:0,
+    cc:'수출',status:'주문접수',docs:'미확보',memo:'',installments:[]}:exportOf(id);
+  if(!o) return;
+  xoRows=JSON.parse(JSON.stringify(o.installments||[]));
+  const c=isNew?null:exportCalc(o);
+  const exps=isNew?[]:DB.expenses.filter(e=>e.exportId===o.id);
+  openModal(isNew?'새 수출 주문':'수출 주문 · '+esc(exLabel(o)), `<div class="fgrid">
+  <div class="f"><label>주문일</label><input id="o_d" type="date" value="${esc(o.orderDate)}"></div>
+  <div class="f"><label>상태</label><select id="o_st">${(DB.settings['수출 상태']||[]).map(x=>`<option ${o.status===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+  <div class="f"><label>바이어</label><input id="o_b" value="${esc(o.buyer)}"></div>
+  <div class="f"><label>국가</label><input id="o_c" value="${esc(o.country)}" placeholder="예: 일본"></div>
+  <div class="f full"><label>품목</label><input id="o_i" value="${esc(o.item)}" placeholder="예: 쓰리포 스티커 3종 × 2,000개"></div>
+  <div class="f"><label>통화</label><select id="o_cur" onchange="xoReadRows();xoRender()">${(DB.settings['통화']||['USD']).map(x=>`<option ${o.currency===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+  <div class="f"><label>주문 금액 (외화)</label><input id="o_fx" type="number" step="0.01" value="${o.fxAmount||''}" oninput="xoHint()"></div>
+  <div class="f"><label>현지 원천징수율 (%)</label><input id="o_wh" type="number" step="0.1" value="${o.withholdRate||''}" placeholder="없으면 비움" oninput="xoHint()"></div>
+  <div class="f"><label>원가센터</label><select id="o_cc">${opt(allCC(),o.cc||'수출')}</select></div>
+  <div class="f"><label>영세율 증빙</label><select id="o_doc">${(DB.settings['수출 증빙']||[]).map(x=>`<option ${o.docs===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+  <div class="f"><label>메모</label><input id="o_m" value="${esc(o.memo)}"></div>
+  </div>
+  <div class="subsec"><h4>입금</h4>
+   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <button class="btn ghost sm" onclick="xoPreset([100])">일시불</button>
+    <button class="btn ghost sm" onclick="xoPreset([30,70])">선금30·잔금70</button>
+    <button class="btn ghost sm" onclick="xoPreset([50,50])">선금50·잔금50</button>
+   </div>
+   <datalist id="xr_labels"><option>일시불</option><option>선금</option><option>잔금</option><option>추가</option></datalist>
+   <div id="xo_rows"></div>
+   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" onclick="xoReadRows();xoRows.push({id:uid('xr'),label:xoRows.length?'잔금':'선금',fx:0,plan:'',paid:'',krw:0,status:'예정'});xoRender()">+ 회차 추가</button><span class="hint" id="xo_sum"></span></div>
+   <p class="hint" style="margin-top:8px">입금되면 <b>실제 입금일과 통장에 찍힌 원화 금액</b>만 넣으세요. 환율 계산은 필요 없습니다. 기준환율 대비 차이는 참고용이며, 회계상 환차손익(매출 인식일 환율 기준)과는 다를 수 있습니다.</p>
+  </div>
+  ${isNew?'':`<div class="subsec"><h4>이 주문의 직접비 (${won(c.direct)||'₩0'}) · 마진 ${c.margin<0?'−':''}${won(Math.abs(Math.round(c.margin)))}</h4>
+   <ul class="mini">${exps.map(e=>`<li>${esc(e.kind||'')} · ${esc(e.item||'')} <b class="num">${won(e.amount)}</b></li>`).join('')||'<li class="hint">연결된 지출 없음 — 지출 장부에서 연결 대상을 "수출 주문"으로 선택하세요</li>'}</ul>
+   <button class="btn ghost sm" style="margin-top:6px" onclick="closeModal();xoAddExp('${o.id}')">+ 이 주문에 지출 추가</button></div>`}`, ()=>{
+    xoReadRows();
+    const g=id=>document.getElementById(id).value;
+    if(!g('o_b').trim()){ toast('바이어를 입력하세요'); return false; }
+    xoRows.forEach(r=>{ r.status = r.paid ? '입금완료' : '예정'; });
+    Object.assign(o,{orderDate:g('o_d'),status:g('o_st'),buyer:g('o_b').trim(),country:g('o_c').trim(),item:g('o_i').trim(),currency:g('o_cur'),
+      fxAmount:+g('o_fx')||0,withholdRate:+g('o_wh')||0,cc:g('o_cc')||'수출',docs:g('o_doc'),memo:g('o_m'),
+      installments:xoRows.filter(r=>(+r.fx||0)>0||r.plan||r.paid)});
+    if(isNew) DB.exports.push(o);
+    save(); render(); return true;
+  }, isNew?null:()=>{
+    const linked=DB.expenses.filter(e=>e.exportId===o.id).length;
+    if(!confirm('이 수출 주문을 삭제할까요?'+(linked?'\n연결된 지출 '+linked+'건은 남지만 원가센터 연결이 끊깁니다.':'')+'\n(주문이 무산된 경우 삭제 대신 상태를 "취소"로 두면 기록이 남습니다)')) return;
+    DB.exports=DB.exports.filter(x=>x.id!==o.id); save(); render(); closeModal();
+  });
+  setTimeout(xoRender,0);
+}
+function xoAddExp(oid){
+  editExp(null);
+  setTimeout(()=>{ const t=document.getElementById('f_tgt'); if(!t) return; t.value='xo';
+    document.getElementById('f_code_w').style.display='none'; document.getElementById('f_xo_w').style.display='';
+    document.getElementById('f_xo').value=oid; },0);
 }
 
 /* ── 고정비 · 대출 ── */
@@ -1521,9 +1728,9 @@ function editPerson(pi){
 /* ── 지출 ── */
 let ef={cc:''};
 function vExp(){
-  const rows=DB.expenses.filter(e=>{ const p=projOf(e.code); return !ef.cc||(p&&p.cc===ef.cc); });
+  const rows=DB.expenses.filter(e=>!ef.cc||expCC(e)===ef.cc);
   const total=rows.reduce((a,e)=>a+(+e.amount||0),0);
-  const byCC={}; DB.expenses.forEach(e=>{ const p=projOf(e.code); const cc=p?p.cc:'(미연결)'; byCC[cc]=(byCC[cc]||0)+(+e.amount||0); });
+  const byCC={}; DB.expenses.forEach(e=>{ const cc=expCC(e)||'(미연결)'; byCC[cc]=(byCC[cc]||0)+(+e.amount||0); });
   return `${pageHead(`지출 장부`,`하위 프로젝트 코드로 입력해도 원가센터로 자동 합산됩니다`)}
   <div class="filters">
     <select onchange="ef.cc=this.value;render()"><option value="">원가센터 전체</option>${allCC().map(c=>`<option ${ef.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
@@ -1531,22 +1738,25 @@ function vExp(){
   <div class="card"><div class="hd"><h2>원가센터별 합계</h2></div><div class="bd" style="display:flex;gap:8px;flex-wrap:wrap">
    ${Object.entries(byCC).sort((a,b)=>b[1]-a[1]).map(([cc,v])=>`<div class="chip"><b class="num">${wonS(v)}</b>${esc(cc)}</div>`).join('')||'<span class="hint">지출이 없습니다.</span>'}
   </div></div>
-  <div class="card"><div class="tw"><table><thead><tr><th>발생일</th><th>지급(예정)일</th><th>프로젝트</th><th>구분</th><th>세부항목</th><th>거래처</th><th class="r">금액</th><th>결제</th><th>원가센터</th></tr></thead><tbody>
-  ${rows.map(e=>{ const p=projOf(e.code);
+  <div class="card"><div class="tw"><table><thead><tr><th>발생일</th><th>지급(예정)일</th><th>프로젝트 / 수출 주문</th><th>구분</th><th>세부항목</th><th>거래처</th><th class="r">금액</th><th>결제</th><th>원가센터</th></tr></thead><tbody>
+  ${rows.map(e=>{
    return `<tr class="click" onclick="editExp('${e.id}')">
-   <td class="num">${esc(e.date||'-')}</td><td class="num">${e.payDate?esc(e.payDate)+(e.payState!=='지급완료'?' '+ddayHtml(dday(e.payDate)):''):(e.payState==='지급완료'?'<span class="hint">-</span>':'<span class="b a">미정</span>')}</td><td><b>${esc(p?pname(p):e.code)}</b></td>
+   <td class="num">${esc(e.date||'-')}</td><td class="num">${e.payDate?esc(e.payDate)+(e.payState!=='지급완료'?' '+ddayHtml(dday(e.payDate)):''):(e.payState==='지급완료'?'<span class="hint">-</span>':'<span class="b a">미정</span>')}</td><td><b>${esc(expTarget(e))}</b></td>
    <td class="mini">${esc(e.kind||'-')}</td><td class="mini">${esc(e.item||'-')}</td><td class="mini">${esc(e.vendor||'-')}</td>
    <td class="r num"><b>${won(e.amount)||'-'}</b></td><td class="mini">${esc(e.payState||'-')}</td>
-   <td class="mini">${esc(p?p.cc:'(미연결)')}</td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">지출 내역이 없습니다.</td></tr>'}
+   <td class="mini">${esc(expCC(e)||'(미연결)')}</td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">지출 내역이 없습니다.</td></tr>'}
   </tbody><tfoot><tr><td colspan="6">합계</td><td class="r num">${won(total)||'₩0'}</td><td colspan="2"></td></tr></tfoot></table></div></div>`;
 }
 function editExp(id){
   const isNew=!id;
-  const e=isNew?{id:uid('e'),date:new Date().toISOString().slice(0,10),payDate:'',code:'',kind:'',item:'',vendor:'',amount:0,payState:'',evidence:'',memo:''}:DB.expenses.find(x=>x.id===id);
+  const e=isNew?{id:uid('e'),date:new Date().toISOString().slice(0,10),payDate:'',exportId:'',code:'',kind:'',item:'',vendor:'',amount:0,payState:'',evidence:'',memo:''}:DB.expenses.find(x=>x.id===id);
   openModal(isNew?'새 지출':'지출 편집', `<div class="fgrid">
   <div class="f"><label>발생일 (발주·청구일)</label><input id="f_date" type="date" value="${esc(e.date)}"></div>
   <div class="f"><label>지급(예정)일</label><input id="f_pd" type="date" value="${esc(e.payDate||'')}"></div>
-  <div class="f"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),e.code)}</select></div>
+  <div class="f"><label>연결 대상</label><select id="f_tgt" onchange="document.getElementById('f_code_w').style.display=this.value==='xo'?'none':'';document.getElementById('f_xo_w').style.display=this.value==='xo'?'':'none'">
+    <option value="proj" ${e.exportId?'':'selected'}>프로젝트</option><option value="xo" ${e.exportId?'selected':''}>수출 주문</option></select></div>
+  <div class="f" id="f_code_w" style="${e.exportId?'display:none':''}"><label>프로젝트</label><select id="f_code">${opt(DB.projects.map(p=>p.code),e.code)}</select></div>
+  <div class="f" id="f_xo_w" style="${e.exportId?'':'display:none'}"><label>수출 주문</label><select id="f_xo"><option value=""></option>${DB.exports.map(o=>`<option value="${o.id}" ${o.id===e.exportId?'selected':''}>${esc((o.orderDate||'')+' '+exLabel(o))}</option>`).join('')}</select></div>
   <div class="f"><label>지출구분</label><select id="f_kind">${opt(DB.settings['지출구분']||[],e.kind)}</select></div>
   <div class="f"><label>금액 (원)</label><input id="f_amt" type="number" value="${e.amount||''}"></div>
   <div class="f"><label>세부항목</label><input id="f_item" value="${esc(e.item)}"></div>
@@ -1556,7 +1766,8 @@ function editExp(id){
   <div class="f full"><label>메모</label><input id="f_memo" value="${esc(e.memo)}"></div>
   </div>`, ()=>{
     const g=id=>document.getElementById(id).value;
-    Object.assign(e,{date:g('f_date'),payDate:g('f_pd'),code:g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
+    const isXo=g('f_tgt')==='xo';
+    Object.assign(e,{date:g('f_date'),payDate:g('f_pd'),exportId:isXo?g('f_xo'):'',code:isXo?'':g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
       vendor:g('f_ven'),payState:g('f_pay'),evidence:g('f_ev'),memo:g('f_memo')});
     if(isNew) DB.expenses.push(e); save(); render(); return true;
   }, isNew?null:()=>{ DB.expenses=DB.expenses.filter(x=>x.id!==id); save(); render(); closeModal(); });
@@ -1564,7 +1775,7 @@ function editExp(id){
 
 /* ── 수익성 ── */
 function vProf(){
-  const rows=allCC().map(ccCalc).filter(c=>c.count>0||c.labor>0||c.extBudget>0);
+  const rows=allCC().map(ccCalc).filter(c=>c.count>0||c.labor>0||c.extBudget>0||c.revenue>0);
   const tt=rows.reduce((a,c)=>{ a.rev+=c.revenue; a.bud+=c.totalBudget; a.margin+=c.estMargin; a.ext+=c.actExt; return a; },{rev:0,bud:0,margin:0,ext:0});
   const nProb=rows.filter(c=>['주의','저마진','적자'].includes(c.state)).length;
   return `${pageHead(`수익성 결론 · 원가센터 기준`,`인건비 = Σ(참여일수 × 일단가) · 일단가 = 연봉 ÷ 연간 근무일수 · 예비비 = 외부지출예산 × 예비비율`)}
@@ -1738,6 +1949,7 @@ function vSet(){
   <tr><td><b>수익성 결론</b></td><td>투입개월, 외부지출예산, 예비비율, 전략목적</td><td>예상매출, 인건비, 실제지출, 마진</td></tr>
   <tr><td><b>자금 흐름</b></td><td>기초 잔액(기준월·금액)</td><td>입금 회차 + 지출 + 고정비 + 대출을 월별 합산, 월말 잔액</td></tr>
   <tr><td><b>계약·입금</b></td><td>계약금액, VAT, 회차별 금액·예정일·계산서 발행일·실입금일</td><td>입금완료·미수·지연·다음 입금, 자금 흐름</td></tr>
+  <tr><td><b>수출 주문</b></td><td>바이어·품목·통화·외화금액·원천징수율·입금 회차(실입금 원화), 증빙</td><td>기준환율 환산, 주문별 마진, '수출' 원가센터 매출, 자금 흐름</td></tr>
   <tr><td><b>고정비·대출</b></td><td>급여·임대료·세금 등 반복 지출, 대출 잔액·금리·월 상환액·만기</td><td>월 환산 고정비, 자금 흐름 월별 유출</td></tr>
   <tr><td><b>결정 기록</b></td><td>중단/취소 사유, 결정사항</td><td>프로젝트명 자동 연결 — 삭제 대신 기록</td></tr>
   </tbody></table></div></div>`;
