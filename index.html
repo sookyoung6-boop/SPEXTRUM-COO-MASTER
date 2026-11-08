@@ -275,6 +275,7 @@ function migrate(){
   const mcc=DB.settings['인력 매트릭스 원가센터']; if(mcc && !mcc.includes('수출')) mcc.push('수출');
   (DB.expenses||[]).forEach(e=>{ if(e.exportId===undefined) e.exportId=''; });
   DB.fixed = DB.fixed || [];
+  DB.imports = DB.imports || [];
   DB.loans = DB.loans || [];
   DB.cashStart = DB.cashStart || {month:'', amount:0};
   (DB.finance||[]).forEach(f=>{
@@ -332,7 +333,7 @@ migrate();
         ③ 저장은 트랜잭션(서버 rev 일치할 때만) ④ 남의 변경을 덮어쓰는 버튼 없음
         ⑤ 하루 첫 접속 시 서버 백업(쓰기 1회 전용, 삭제 불가)
    ════════════════════════════════════════════════════════════════ */
-const APP_VER=21;
+const APP_VER=22;
 const BK_PATH='controlTowerBackups', BK_IDX='controlTowerBackupIndex';
 let SERVER_JSON=null, verBlocked=false, serverEmpty=false, bkState='확인 전';
 function lockReason(){
@@ -1805,15 +1806,21 @@ function editPerson(pi){
 
 
 /* ── 지출 ── */
-let ef={cc:''};
+let ef={cc:'',q:''};
 function vExp(){
-  const rows=DB.expenses.filter(e=>!ef.cc||expCC(e)===ef.cc);
+  let rows=DB.expenses.filter(e=>!ef.cc||expCC(e)===ef.cc);
+  if(ef.q) rows=rows.filter(e=>nz([e.item,e.vendor,e.kind,e.memo,e.evidence,expTarget(e)].join(' ')).includes(nz(ef.q)));
+  rows=[...rows].sort((a,b)=>((b.payDate||b.date||'')).localeCompare(a.payDate||a.date||''));
   const total=rows.reduce((a,e)=>a+(+e.amount||0),0);
   const byCC={}; DB.expenses.forEach(e=>{ const cc=expCC(e)||'(미연결)'; byCC[cc]=(byCC[cc]||0)+(+e.amount||0); });
   return `${pageHead(`지출 장부`,`하위 프로젝트 코드로 입력해도 원가센터로 자동 합산됩니다`)}
   <div class="filters">
     <select onchange="ef.cc=this.value;render()"><option value="">원가센터 전체</option>${allCC().map(c=>`<option ${ef.cc===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
-    <span style="flex:1"></span><button class="btn" onclick="editExp(null)">+ 지출</button></div>
+    <input placeholder="검색 (품목·거래처·문서번호)" value="${esc(ef.q||'')}" onchange="ef.q=this.value;render()" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px">
+    <span style="flex:1"></span>
+    ${(DB.imports||[]).length?`<button class="btn ghost" onclick="impLog()">가져오기 기록</button>`:''}
+    <button class="btn ghost" onclick="impPick()">⇪ 닥스웨이브 가져오기</button>
+    <button class="btn" onclick="editExp(null)">+ 지출</button></div>
   <div class="card"><div class="hd"><h2>원가센터별 합계</h2></div><div class="bd" style="display:flex;gap:8px;flex-wrap:wrap">
    ${Object.entries(byCC).sort((a,b)=>b[1]-a[1]).map(([cc,v])=>`<div class="chip"><b class="num">${wonS(v)}</b>${esc(cc)}</div>`).join('')||'<span class="hint">지출이 없습니다.</span>'}
   </div></div>
@@ -1849,7 +1856,7 @@ function editExp(id){
     Object.assign(e,{date:g('f_date'),payDate:g('f_pd'),exportId:isXo?g('f_xo'):'',code:isXo?'':g('f_code'),kind:g('f_kind'),amount:+g('f_amt')||0,item:g('f_item'),
       vendor:g('f_ven'),payState:g('f_pay'),evidence:g('f_ev'),memo:g('f_memo')});
     if(isNew) DB.expenses.push(e); save(); render(); return true;
-  }, isNew?null:()=>{ DB.expenses=DB.expenses.filter(x=>x.id!==id); save(); render(); closeModal(); });
+  }, isNew?null:()=>{ if(!confirm('이 지출을 삭제할까요?\n'+(e.item||e.kind||'')+' '+(won(e.amount)||''))) return; DB.expenses=DB.expenses.filter(x=>x.id!==id); save(); render(); closeModal(); });
 }
 
 /* ── 수익성 ── */
@@ -2538,6 +2545,114 @@ function editExport(id, tpl){
     saveOrder(d,expectRev).then(()=>{ closeModal(); render(); toast('삭제됨 (서버 기록은 보존)'); }).catch(()=>{});
   });
   setTimeout(()=>{ xoRender(); xlRender(); },0);
+}
+
+/* ═══════════ 닥스웨이브 지출 가져오기 (v22) ════════════════════════
+   - '닥스웨이브 지출 정리본' 엑셀의 [정리본] 시트를 읽음
+   - 포함=Y · 원화 금액 있음 · 프로젝트 코드 유효한 줄만
+   - 중복 방지 키: 문서번호+원 금액+단가+수량(+같은 조합 순번) → 같은 파일을 다시 올려도 새 줄만 들어감
+   - 실행 전 서버 백업, 가져온 묶음 단위로 되돌리기 가능
+   ════════════════════════════════════════════════════════════════ */
+const XLSX_SRC='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+let IMP=null;
+function ensureXLSX(){ return window.XLSX?Promise.resolve():loadScript(XLSX_SRC); }
+function impPick(){
+  const why=lockReason(); if(why){ toast(why); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx,.xls';
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f) return;
+    ensureXLSX().then(()=>f.arrayBuffer()).then(buf=>impParse(buf,f.name)).catch(e=>toast('엑셀을 읽지 못했습니다 ('+(e&&e.message||e)+')')); };
+  inp.click();
+}
+const impNum=v=>{ if(v===null||v===undefined||v==='') return null; if(typeof v==='number') return v; const n=+String(v).replace(/[,\s원₩]/g,''); return isNaN(n)?null:n; };
+function impDate(v){ if(v===null||v===undefined||v==='') return '';
+  if(typeof v==='number'){ const d=new Date(Math.round((v-25569)*86400000)); return d.toISOString().slice(0,10); }
+  const m=String(v).match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/); return m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:''; }
+function impParse(buf, fname){
+  const wb=XLSX.read(buf,{type:'array'});
+  const ws=wb.Sheets['정리본']; if(!ws){ toast("'정리본' 시트가 없습니다 — 닥스웨이브 정리본 파일인지 확인하세요"); return; }
+  const A=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
+  const H=(A[0]||[]).map(h=>String(h).split('\n')[0].trim());
+  const col=n=>H.findIndex(h=>h.startsWith(n));
+  const C={inc:col('포함'),date:col('날짜'),code:col('프로젝트코드'),kind:col('지출구분'),item:col('품목명'),vendor:col('거래처'),krw:col('원화 금액'),
+    cur:col('통화'),famt:col('원 금액'),up:col('단가'),qty:col('수량'),pay:col('결제구분'),drafter:col('기안자'),ddate:col('기안일'),doc:col('문서번호'),title:col('결재 문서')};
+  const miss=Object.entries(C).filter(([k,v])=>v<0&&['inc','code','item','krw','doc'].includes(k)).map(([k])=>k);
+  if(miss.length){ toast('정리본 형식이 다릅니다 (없는 칸: '+miss.join(', ')+')'); return; }
+  const have=new Set(DB.expenses.map(e=>e.srcKey).filter(Boolean));
+  const codes=new Set(DB.projects.map(p=>p.code)), kinds=new Set(DB.settings['지출구분']||[]);
+  const fixedHit=(DB.fixed||[]).some(f=>/급여|인건비|임대/.test((f.name||'')+(f.item||'')+(f.label||'')+(f.kind||'')));
+  const seen={}, rows=[];
+  A.slice(1).forEach((r,i)=>{
+    const g=k=>C[k]>=0?r[C[k]]:'';
+    if(!String(g('doc')).trim()&&!String(g('item')).trim()) return;
+    const base=['dw',String(g('doc')).trim(),impNum(g('famt')),impNum(g('up')),impNum(g('qty'))].join('|');
+    seen[base]=(seen[base]||0)+1; const key=base+'#'+seen[base];
+    const x={row:i+2,key,inc:String(g('inc')).trim().toUpperCase(),date:impDate(g('date'))||impDate(g('ddate')),ddate:impDate(g('ddate')),
+      code:String(g('code')).trim(),kind:String(g('kind')).trim(),item:String(g('item')).trim(),vendor:String(g('vendor')).trim(),
+      krw:impNum(g('krw')),cur:String(g('cur')||'KRW').trim()||'KRW',famt:impNum(g('famt')),pay:String(g('pay')).trim(),drafter:String(g('drafter')).trim(),
+      doc:String(g('doc')).trim(),title:String(g('title')).trim()};
+    x.payroll=/급여|인건비|귀속|임대료/.test(x.item+' '+x.title);
+    if(x.inc!=='Y') x.skip='포함=N';
+    else if(have.has(key)) x.skip='이미 가져옴';
+    else if(x.krw===null) x.skip=x.cur!=='KRW'?'외화 — 원화 금액 미입력':'원화 금액 없음';
+    else if(x.code&&!codes.has(x.code)) x.skip='프로젝트 코드 없음 ('+x.code+')';
+    else if(!x.date) x.skip='날짜 없음';
+    if(!x.skip&&x.kind&&!kinds.has(x.kind)) x.warnKind=true;
+    rows.push(x);
+  });
+  IMP={fname,rows,dropPayroll:fixedHit,fixedHit};
+  impModal();
+}
+function impSel(){ return IMP.rows.filter(x=>!x.skip&&!(IMP.dropPayroll&&x.payroll)); }
+function impModal(){
+  const sel=impSel(), sk={}; IMP.rows.filter(x=>x.skip).forEach(x=>{ const k=x.skip.replace(/\s*\(.*\)$/,''); (sk[k]=sk[k]||[]).push(x); });
+  const pay=IMP.rows.filter(x=>!x.skip&&x.payroll), noProj=sel.filter(x=>!x.code).length, wk=sel.filter(x=>x.warnKind);
+  const tot=sel.reduce((a,x)=>a+x.krw,0);
+  openModal('닥스웨이브 지출 가져오기 · 미리보기', `
+  <p class="hint" style="margin-bottom:10px">파일: <b>${esc(IMP.fname)}</b> · 정리본 ${IMP.rows.length}줄</p>
+  <div class="kpi" style="margin-bottom:10px">
+   <div class="k"><div class="l">새로 들어갈 줄</div><div class="v num">${sel.length}</div></div>
+   <div class="k"><div class="l">금액 합계</div><div class="v num">${wonS(tot)}</div></div>
+   <div class="k ${noProj?'am':''}"><div class="l">프로젝트 미지정 (미연결로 들어감)</div><div class="v num">${noProj}</div></div></div>
+  ${pay.length?`<label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px">
+    <input type="checkbox" ${IMP.dropPayroll?'checked':''} onchange="IMP.dropPayroll=this.checked;impModal()">
+    <span><b>급여·인건비·임대료 ${pay.length}줄 제외</b> (${wonS(pay.reduce((a,x)=>a+x.krw,0))})<br><span class="hint">고정비·대출 탭이나 인력분배에 이미 있으면 같은 돈이 두 번 잡힙니다.${IMP.fixedHit?' 고정비 탭에 급여·임대 항목이 있어 기본으로 제외했습니다.':''}</span></span></label>`:''}
+  ${wk.length?`<p class="hint" style="color:var(--danger)">설정에 없는 지출구분 ${wk.length}줄: ${[...new Set(wk.map(x=>x.kind))].map(esc).join(', ')} — 그대로 들어가지만 예산 라인과 연결되지 않습니다.</p>`:''}
+  <div class="subsec"><h4>빠지는 줄</h4>
+   ${Object.keys(sk).length?`<ul class="mini">${Object.entries(sk).map(([k,xs])=>`<li><b>${esc(k)}</b> ${xs.length}줄${k!=='이미 가져옴'&&k!=='포함=N'?` <span class="hint">— 정리본 ${xs.slice(0,8).map(x=>x.row+'행').join(', ')}${xs.length>8?' 외':''}</span>`:''}</li>`).join('')}</ul>
+   <p class="hint">빠진 줄은 정리본을 고친 뒤 같은 파일을 다시 가져오면 그 줄만 추가됩니다.</p>`:'<p class="hint">없음</p>'}</div>
+  <div class="subsec"><h4>들어갈 줄 (앞 40줄 미리보기)</h4><div class="tw" style="max-height:300px;overflow:auto"><table><thead><tr><th>날짜</th><th>프로젝트</th><th>구분</th><th>품목</th><th class="r">금액</th></tr></thead><tbody>
+   ${sel.slice(0,40).map(x=>`<tr><td class="num mini">${esc(x.date)}</td><td class="mini">${esc(x.code||'(미연결)')}</td><td class="mini">${esc(x.kind||'-')}</td><td class="mini">${esc(x.item)}</td><td class="r num">${won(x.krw)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">새로 들어갈 줄이 없습니다.</td></tr>'}
+  </tbody></table></div></div>
+  <p class="hint">결제상태는 '지급완료', 지급일 = 정리본 날짜, 발생일 = 기안일로 들어갑니다. 실행 전 서버 백업이 자동으로 남고, 지출 장부의 [가져오기 기록]에서 이 묶음 전체를 되돌릴 수 있습니다.</p>`,
+  ()=>{ impRun(); return false; });
+  const sv=document.querySelector('#ovl .macts .btn:not(.ghost)')||null; if(sv) sv.textContent=sel.length?`${sel.length}줄 가져오기`:'닫기';
+}
+function impRun(){
+  const sel=impSel(); if(!sel.length){ closeModal(); return; }
+  const why=lockReason(); if(why){ toast(why); return; }
+  const have=new Set(DB.expenses.map(e=>e.srcKey).filter(Boolean));
+  const batch=uid('imp'), at=new Date().toISOString();
+  preActionBackup('지출가져오기전').then(()=>{
+    const add=sel.filter(x=>!have.has(x.key)).map(x=>({id:uid('e'),date:x.ddate||x.date,payDate:x.date,exportId:'',code:x.code,kind:x.kind,item:x.item,vendor:x.vendor,
+      amount:Math.round(x.krw),payState:'지급완료',evidence:'닥스웨이브 '+x.doc,
+      memo:['닥스웨이브',x.pay,x.drafter,x.cur!=='KRW'?`${x.cur} ${(x.famt||0).toLocaleString()}`:''].filter(Boolean).join(' · '),srcKey:x.key,imp:batch}));
+    DB.expenses.push(...add);
+    DB.imports=DB.imports||[]; DB.imports.push({id:batch,at,by:me(),file:IMP.fname,count:add.length,total:add.reduce((a,e)=>a+e.amount,0)});
+    save(); closeModal(); IMP=null; render(); toast(add.length+'줄 가져옴 — 저장 중');
+  });
+}
+function impLog(){
+  const L=[...(DB.imports||[])].reverse();
+  openModal('가져오기 기록', L.length?`<div class="tw"><table><thead><tr><th>일시</th><th>파일</th><th class="r">줄</th><th class="r">금액</th><th>남은 줄</th><th></th></tr></thead><tbody>
+   ${L.map(b=>{ const n=DB.expenses.filter(e=>e.imp===b.id).length; return `<tr><td class="num mini">${esc((b.at||'').slice(0,16).replace('T',' '))}</td><td class="mini">${esc(b.file||'')}${b.by?'<div class="hint">'+esc(b.by)+'</div>':''}</td>
+    <td class="r num">${b.count}</td><td class="r num">${won(b.total)}</td><td class="num">${n}</td><td>${n?`<button class="btn ghost sm" onclick="impUndo('${b.id}')">되돌리기</button>`:'<span class="hint">되돌림</span>'}</td></tr>`; }).join('')}
+  </tbody></table></div><p class="hint">되돌리기 = 그 묶음으로 들어온 지출을 지출 장부에서 뺍니다. 들어온 뒤 수정한 줄도 함께 빠집니다. 실행 전 서버 백업이 남습니다.</p>`:'<p class="hint">아직 가져온 기록이 없습니다.</p>', null);
+}
+function impUndo(id){
+  const why=lockReason(); if(why){ toast(why); return; }
+  const xs=DB.expenses.filter(e=>e.imp===id); if(!xs.length) return;
+  if(!confirm(`이 묶음의 지출 ${xs.length}줄(${won(xs.reduce((a,e)=>a+(+e.amount||0),0))})을 지출 장부에서 뺍니다.\n실행 전 서버 백업이 남습니다. 진행할까요?`)) return;
+  preActionBackup('가져오기되돌림전').then(()=>{ DB.expenses=DB.expenses.filter(e=>e.imp!==id); save(); closeModal(); render(); toast(xs.length+'줄 되돌림 — 저장 중'); });
 }
 
 /* ═══════════ modal ═══════════ */
