@@ -223,6 +223,7 @@ table.mdist{width:100%;table-layout:fixed;min-width:1180px}table.mdist col.c-nam
 table.mdist td{min-width:86px}table.mdist .mbar{height:24px}table.mdist .mnum{font-size:11.5px}
 
 table.mdist td{padding:4px 4px!important}table.mdist.six{min-width:900px}table.mdist.six .mbar{height:28px}table.mdist.six .mnum{font-size:12.5px}
+input.mi.est{border-style:dashed;border-color:var(--amber);background:var(--amber-bg)}.estd{font-size:9.5px;color:var(--amber);font-weight:800;margin-right:4px}
 </style>
 </head>
 <body>
@@ -386,7 +387,7 @@ migrate();
         ③ 저장은 트랜잭션(서버 rev 일치할 때만) ④ 남의 변경을 덮어쓰는 버튼 없음
         ⑤ 하루 첫 접속 시 서버 백업(쓰기 1회 전용, 삭제 불가)
    ════════════════════════════════════════════════════════════════ */
-const APP_VER=23;
+const APP_VER=24;
 const BK_PATH='controlTowerBackups', BK_IDX='controlTowerBackupIndex';
 let SERVER_JSON=null, verBlocked=false, serverEmpty=false, bkState='확인 전';
 function lockReason(){
@@ -1837,13 +1838,16 @@ function pplMonthView(){
    <div class="seg">${[['6','6개월'],['12','1년']].map(([k,l])=>`<button class="${(PPL.mv||'6')===k?'on':''}" onclick="PPL.mv='${k}';render()">${l}</button>`).join('')}</div>
    ${six?`<div style="display:flex;align-items:center;gap:6px"><button class="btn ghost sm" onclick="PPL.mend=ymAdd(PPL.mend,-3);render()">◀</button><b>${mks[0].replace('-','.')} ~ ${mks[5].replace('-','.')}</b><button class="btn ghost sm" onclick="PPL.mend=ymAdd(PPL.mend,3);render()">▶</button>${PPL.mend!==ymNow()?`<button class="btn ghost sm" onclick="PPL.mend=ymNow();render()">이번 달</button>`:''}</div>`
    :`<div style="display:flex;align-items:center;gap:6px"><button class="btn ghost sm" onclick="PPL.year--;render()">◀</button><b>${y}년</b><button class="btn ghost sm" onclick="PPL.year++;render()">▶</button></div>`}
-   <span class="hint">칸 = 그 달 투입 · 색 = 원가센터 · 칸 폭 = 월 ${WD}일 · 넘치면 빨강 · 칸에 마우스를 올리면 내역</span></div>
+   <span class="hint">칸 = 그 달 투입 · 색 = 원가센터 · 칸 폭 = 월 ${WD}일 · 넘치면 빨강 · 칸에 마우스를 올리면 내역</span><span style="flex:1"></span>
+   ${DB.assignments.some(a=>!a.start||!a.end)?`<button class="btn ghost sm" onclick="migOpen()">기간 미지정 ${DB.assignments.filter(a=>!a.start||!a.end).length}건 → 월로 나누기</button>`:''}
+   ${(DB.monthMig||[]).map(x=>`<button class="btn ghost sm" onclick="migUndo('${x.id}')">월 나누기 되돌리기 (${esc((x.at||'').slice(5,10))})</button>`).join('')}</div>
    ${has?`<div class="bd" style="padding-bottom:0">${pplLegend(usedCC.length?usedCC:pplCCs())}</div>`:''}
    ${has?`<div class="tw"><table class="mdist ${six?'six':''}"><colgroup><col class="c-name">${mks.map(()=>'<col>').join('')}<col class="c-und"></colgroup><thead><tr><th class="name">이름</th>${mks.map(m=>`<th class="${m===cur?'cur':''}">${six&&m.slice(5)==='01'||six&&m===mks[0]?m.slice(2,4)+'년 ':''}${+m.slice(5)}월</th>`).join('')}<th class="r">기간<br>미지정</th></tr></thead><tbody>
    ${peopleByPart().map(([pt,ps])=>`<tr class="grp"><td colspan="${mks.length+2}">${esc(pt)} <span class="hint">${ps.length}명</span></td></tr>`+ps.map(p=>`<tr><td class="name">${nameCell(p)}</td>${mks.map(m=>{ const o=cell(p.name,m), t=Object.values(o).reduce((a,b)=>a+b,0), ov=t>WD*1.02;
-      return `<td title="${esc(Object.entries(o).map(([c,v])=>c+' '+fmtD(v)+'일').join('\n'))}" onclick="PPL.ym='${m}';PPL.tab='input';render()"><div class="mbar ${ov?'over':''}">${Object.entries(o).map(([c,v])=>`<i style="width:${Math.min(100,v/WD*100)}%;background:${ccColor(c)}"></i>`).join('')}</div><div class="mnum ${ov?'over':''}">${t?fmtD(t)+'일':''}</div></td>`; }).join('')}
+      const est=asgOfPerson(p.name).some(a=>a.est&&a.month===m);
+      return `<td title="${esc(Object.entries(o).map(([c,v])=>c+' '+fmtD(v)+'일').join('\n')+(est?'\n(추정 포함)':''))}" onclick="PPL.ym='${m}';PPL.tab='input';render()"><div class="mbar ${ov?'over':''}">${Object.entries(o).map(([c,v])=>`<i style="width:${Math.min(100,v/WD*100)}%;background:${ccColor(c)}"></i>`).join('')}</div><div class="mnum ${ov?'over':''}">${est?'<span class="estd">추정</span>':''}${t?fmtD(t)+'일':''}</div></td>`; }).join('')}
       <td class="r num hint">${undated(p.name)?fmtD(undated(p.name)):''}</td></tr>`).join('')).join('')}
-   </tbody></table></div>`:`<div class="empty" style="padding:28px">아직 기간이 있는 배정이 없습니다. <b>월별 입력</b>에서 그 달 일수를 넣으면 여기에 채워집니다.<br><button class="btn" style="margin-top:12px" onclick="PPL.tab='input';render()">월별 입력으로</button></div>`}
+   </tbody></table></div>`:`<div class="empty" style="padding:28px">아직 기간이 있는 배정이 없습니다. <b>월별 입력</b>에서 그 달 일수를 넣으면 여기에 채워집니다.<br><button class="btn" style="margin-top:12px" onclick="PPL.tab='input';render()">월별 입력으로</button>${DB.assignments.some(a=>!a.start||!a.end)?` <button class="btn ghost" style="margin-top:12px" onclick="migOpen()">기간 미지정 배정 → 월로 나누기</button>`:''}</div>`}
   </div><p class="hint">칸을 누르면 그 달 월별 입력으로 이동합니다. '기간 미지정'은 예전 방식(기간 없이 일수만)으로 넣은 배정입니다.</p>`;
 }
 
@@ -1863,10 +1867,10 @@ function pplInputView(){
    <div class="tw"><table class="mtx minput"><thead><tr><th class="name">이름</th>${ccs.map(c=>`<th>${esc(c).replace(' ','<br>')}</th>`).join('')}<th style="min-width:150px">이번 달 투입</th></tr></thead><tbody>
    ${peopleByPart().map(([pt,ps])=>`<tr class="grp"><td colspan="${ccs.length+2}">${esc(pt)}</td></tr>`+ps.map(p=>`<tr><td class="name">${nameCell(p)}</td>
      ${ccs.map(cc=>{ const a=monthAsg(p.name,cc,ym), o=otherIn(p.name,cc,ym), r=riOf(p,cc);
-       return `<td title="${esc(r?(r.main||'')+(r.memo?' · '+r.memo:''):'')}"><input class="num mi ${a?'on':''} ${r&&!a?'hasr':''}" inputmode="decimal" value="${a?fmtD(a.days):''}" data-p="${esc(p.name)}" data-c="${esc(cc)}" onchange="setMonthDays(this)">${o?`<div class="mini hint">+${fmtD(o)}</div>`:''}</td>`; }).join('')}
+       return `<td title="${esc(r?(r.main||'')+(r.memo?' · '+r.memo:''):'')}"><input class="num mi ${a?'on':''} ${a&&a.est?'est':''} ${r&&!a?'hasr':''}" inputmode="decimal" value="${a?fmtD(a.days):''}" data-p="${esc(p.name)}" data-c="${esc(cc)}" onchange="setMonthDays(this)">${o?`<div class="mini hint">+${fmtD(o)}</div>`:''}</td>`; }).join('')}
      <td id="mt_${p.name.replace(/[^\w가-힣]/g,'_')}">${rowTotHTML(p.name,ym)}</td></tr>`).join('')).join('')}
    </tbody></table></div>
-   <div class="bd" style="border-top:1px solid var(--line)"><span class="hint">옅은 테두리 칸 = 담당 업무가 등록된 원가센터 · 칸 아래 +숫자 = 기간 직접 입력한 다른 배정이 이 달에 걸친 일수</span></div></div>`;
+   <div class="bd" style="border-top:1px solid var(--line)"><span class="hint">점선 칸 = 기간 미지정에서 나눈 추정값 (고치면 확정) · 옅은 테두리 칸 = 담당 업무가 등록된 원가센터 · 칸 아래 +숫자 = 기간 직접 입력한 다른 배정이 이 달에 걸친 일수</span></div></div>`;
 }
 function setMonthDays(el){
   const why=lockReason(); if(why){ toast('저장 안 됨 — '+why); render(); return; }
@@ -1875,7 +1879,7 @@ function setMonthDays(el){
   let a=monthAsg(name,cc,ym);
   if(!v){ if(a) DB.assignments=DB.assignments.filter(x=>x!==a); el.classList.remove('on'); }
   else { if(!a){ a={id:uid('a'),person:name,cc,start:ym+'-01',end:ymLast(ym),days:0,memo:'',month:ym,type:(riOf(personByName(name),cc)||{}).main||''}; DB.assignments.push(a); }
-    a.days=v; el.classList.add('on'); el.value=fmtD(v); }
+    a.days=v; if(a.est){ a.est=false; el.classList.remove('est'); } el.classList.add('on'); el.value=fmtD(v); }
   save(); const t=document.getElementById('mt_'+name.replace(/[^\w가-힣]/g,'_')); if(t) t.innerHTML=rowTotHTML(name,ym);
 }
 function copyPrevMonth(){
@@ -1991,7 +1995,7 @@ function editRole(name,cc){
 function pplListView(){
   const G=[['cc','원가센터별'],['person','사람별'],['part','파트별'],['none','묶지 않음']];
   const rowH=(a,first)=>{ const p=personByName(a.person), r=riOf(p,a.cc);
-    const per=a.month?`<span class="num">${ymLabel(a.month)}</span>`:a.start&&a.end?`<span class="num mini">${esc(a.start)} ~ ${esc(a.end)}</span>`:'<span class="b a">기간 미지정</span>';
+    const per=a.month?`<span class="num">${ymLabel(a.month)}</span>${a.est?' <span class="b a">추정</span>':''}`:a.start&&a.end?`<span class="num mini">${esc(a.start)} ~ ${esc(a.end)}</span>`:'<span class="b a">기간 미지정</span>';
     return `<tr class="click" onclick="editAsg('${a.id}')"><td style="padding-left:22px">${first==='cc'?(r&&r.level==='리더'?'<b style="color:var(--blue)">★ ':'<b>')+esc(a.person)+'</b>':`<b>${esc(a.cc)}</b>`}${first==='part'?` <span class="hint">${esc(a.person)}</span>`:''}</td>
      <td>${(a.type||(r&&r.main))?typeChip(a.type||r.main,false):''} <span class="mini hint">${esc(r&&r.memo||a.memo||'')}</span></td><td>${per}</td><td class="r num">${fmtD(a.days)}</td><td class="r num">${wonS((+a.days||0)*dailyRateOf(a.person))}</td></tr>`; };
   const sortA=xs=>[...xs].sort((a,b)=>(b.start||'').localeCompare(a.start||'')||(+b.days)-(+a.days));
@@ -2056,6 +2060,71 @@ function editPerson(pi){
     DB.assignments=DB.assignments.filter(a=>a.person!==p.name);
     DB.people.splice(pi,1);
     save(); render(); closeModal();
+  });
+}
+
+/* ═══════════ 기간 미지정 배정 → 월로 나누기 (v24, 1회용·되돌리기 가능) ═══════════ */
+let MIG={how:'proj',from:'',to:''};
+function ymRange(a,b){ const out=[]; if(!a||!b||a>b) return out; let m=a; while(m<=b&&out.length<60){ out.push(m); m=ymAdd(m,1); } return out; }
+function ccProjRange(cc){ const ps=DB.projects.filter(p=>p.cc===cc); const st=ps.map(p=>p.start).filter(Boolean).sort()[0], en=ps.map(p=>p.due).filter(Boolean).sort().slice(-1)[0];
+  return st&&en&&st<=en?[st.slice(0,7),en.slice(0,7)]:null; }
+function splitDays(d,n){ const step=0.5, base=Math.floor(d/n/step)*step; const arr=Array(n).fill(base); let rest=Math.round((d-base*n)*100)/100; let i=0;
+  while(rest>=step-1e-9&&i<n*4){ arr[i%n]+=step; rest=Math.round((rest-step)*100)/100; i++; } if(rest>0) arr[n-1]=Math.round((arr[n-1]+rest)*100)/100; return arr; }
+function migPlan(){
+  const cur=ymNow(); const und=DB.assignments.filter(a=>!a.start||!a.end);
+  return und.map(a=>{ let rng=null, why='';
+    if(MIG.how==='proj'){ const r=ccProjRange(a.cc); if(r){ rng=[r[0], r[1]>cur?cur:r[1]]; why='프로젝트 기간'; } }
+    if(!rng){ rng=[MIG.from,MIG.to]; why=MIG.how==='proj'?'지정 기간 (프로젝트 날짜 없음)':'지정 기간'; }
+    let ms=ymRange(rng[0],rng[1]).filter(m=>!monthAsg(a.person,a.cc,m));
+    return {a,ms,why,parts:ms.length?splitDays(+a.days||0,ms.length):[]}; });
+}
+function migOpen(){
+  const why=lockReason(); if(why){ toast(why); return; }
+  const cur=ymNow(); if(!MIG.to){ MIG.to=ymAdd(cur,-1); MIG.from=`${cur.slice(0,4)}-07`; if(MIG.from>MIG.to) MIG.from=ymAdd(MIG.to,-3); }
+  migRender();
+}
+function migRender(){
+  const plan=migPlan(), ok=plan.filter(x=>x.ms.length), bad=plan.filter(x=>!x.ms.length);
+  const byCC={}; ok.forEach(x=>{ const k=x.a.cc; const g=byCC[k]=byCC[k]||{n:0,d:0,ms:new Set(),why:new Set()}; g.n++; g.d+=+x.a.days||0; x.ms.forEach(m=>g.ms.add(m)); g.why.add(x.why); });
+  openModal('기간 미지정 배정 → 월로 나누기', `
+   <p class="hint" style="margin-bottom:10px">기간 없이 일수만 있는 배정 <b>${plan.length}건</b>을 여러 달에 고르게 나눠 월별 배정으로 바꿉니다. <b>실제 투입 월이 아니라 추정</b>이며, 바꾼 칸은 '추정' 표시가 붙습니다. 실행 전 서버 백업이 남고, 한 번에 되돌릴 수 있습니다.</p>
+   <div class="fgrid">
+    <div class="f full"><label>나누는 기준</label><select onchange="MIG.how=this.value;migRender()">
+     <option value="proj" ${MIG.how==='proj'?'selected':''}>원가센터의 프로젝트 기간 (시작일~마감일, 이번 달까지) · 날짜 없으면 아래 기간</option>
+     <option value="range" ${MIG.how==='range'?'selected':''}>모두 아래 기간에 고르게</option></select></div>
+    <div class="f"><label>기간 시작</label><input type="month" value="${MIG.from}" onchange="MIG.from=this.value;migRender()"></div>
+    <div class="f"><label>기간 끝</label><input type="month" value="${MIG.to}" onchange="MIG.to=this.value;migRender()"></div></div>
+   <div class="tw" style="margin-top:10px;max-height:320px;overflow:auto"><table><thead><tr><th>원가센터</th><th class="r">건</th><th class="r">일수</th><th>나눌 달</th><th>기준</th></tr></thead><tbody>
+    ${Object.entries(byCC).sort((a,b)=>b[1].d-a[1].d).map(([cc,g])=>{ const ms=[...g.ms].sort(); return `<tr><td><i class="dot" style="background:${ccColor(cc)}"></i><b>${esc(cc)}</b></td><td class="r num">${g.n}</td><td class="r num">${fmtD(g.d)}</td><td class="num mini">${ms[0].replace('-','.')} ~ ${ms[ms.length-1].replace('-','.')} (${ms.length}개월)</td><td class="mini">${[...g.why].map(esc).join(', ')}</td></tr>`; }).join('')||'<tr><td colspan="5" class="empty">나눌 배정이 없습니다.</td></tr>'}
+   </tbody></table></div>
+   ${bad.length?`<p class="hint" style="color:var(--danger);margin-top:8px">나눌 달이 없는 ${bad.length}건은 그대로 둡니다 (기간이 비었거나, 그 기간이 모두 이미 월별 입력된 달).</p>`:''}
+   <p class="hint" style="margin-top:8px">이미 월별 입력으로 숫자가 있는 달은 건너뛰고, 총 일수는 그대로 유지됩니다 (0.5일 단위로 나눔).</p>`, ()=>{ migRun(); return false; });
+  const sv=document.querySelector('#ovl .macts .btn:not(.ghost)'); if(sv) sv.textContent=ok.length?`${ok.length}건 나누기`:'닫기';
+}
+function migRun(){
+  const plan=migPlan().filter(x=>x.ms.length); if(!plan.length){ closeModal(); return; }
+  const why=lockReason(); if(why){ toast(why); return; }
+  const id=uid('mig'), at=new Date().toISOString();
+  preActionBackup('월나누기전').then(()=>{
+    const created=[];
+    plan.forEach(x=>{ x.ms.forEach((m,i)=>{ if(!x.parts[i]) return;
+      const n={id:uid('a'),person:x.a.person,cc:x.a.cc,start:m+'-01',end:ymLast(m),days:x.parts[i],memo:x.a.memo||'',month:m,
+        type:(riOf(personByName(x.a.person),x.a.cc)||{}).main||'',est:true,mig:id}; created.push(n); }); });
+    const orig=plan.map(x=>x.a), oset=new Set(orig.map(a=>a.id));
+    DB.assignments=DB.assignments.filter(a=>!oset.has(a.id)).concat(created);
+    DB.monthMig=DB.monthMig||[]; DB.monthMig.push({id,at,by:me(),originals:JSON.parse(JSON.stringify(orig)),count:created.length});
+    save(); closeModal(); render(); toast(`${orig.length}건을 ${created.length}개 월 배정으로 나눴습니다`);
+  });
+}
+function migUndo(id){
+  const L=(DB.monthMig||[]).find(x=>x.id===id); if(!L) return;
+  const why=lockReason(); if(why){ toast(why); return; }
+  const mine=DB.assignments.filter(a=>a.mig===id), edited=mine.filter(a=>a.est===false).length;
+  if(!confirm(`월로 나눈 배정 ${mine.length}칸을 지우고, 원래 '기간 미지정' 배정 ${L.originals.length}건을 되살립니다.${edited?`\n(그 뒤 직접 고친 ${edited}칸도 함께 지워집니다)`:''}\n실행 전 서버 백업이 남습니다. 진행할까요?`)) return;
+  preActionBackup('월나누기되돌림전').then(()=>{
+    const have=new Set(DB.assignments.map(a=>a.id));
+    DB.assignments=DB.assignments.filter(a=>a.mig!==id).concat(L.originals.filter(a=>!have.has(a.id)));
+    DB.monthMig=DB.monthMig.filter(x=>x.id!==id); save(); render(); toast('되돌렸습니다');
   });
 }
 
