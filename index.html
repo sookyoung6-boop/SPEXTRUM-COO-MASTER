@@ -224,6 +224,7 @@ table.mdist td{min-width:86px}table.mdist .mbar{height:24px}table.mdist .mnum{fo
 
 table.mdist td{padding:4px 4px!important}table.mdist.six{min-width:900px}table.mdist.six .mbar{height:28px}table.mdist.six .mnum{font-size:12.5px}
 input.mi.est{border-style:dashed;border-color:var(--amber);background:var(--amber-bg)}.estd{font-size:9.5px;color:var(--amber);font-weight:800;margin-right:4px}
+.cfsum{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 16px;background:#FAFBFA;border-bottom:1px solid var(--line);font-size:12.8px}.cfsum b{font-size:14px}
 .cf2{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;align-items:start}
 @media (max-width:900px){.cf2{grid-template-columns:1fr}}
 tr.cfwk td{background:#FAFBFA;font-weight:800;font-size:11.5px;color:var(--sub);padding:5px 12px}
@@ -396,7 +397,7 @@ migrate();
         ③ 저장은 트랜잭션(서버 rev 일치할 때만) ④ 남의 변경을 덮어쓰는 버튼 없음
         ⑤ 하루 첫 접속 시 서버 백업(쓰기 1회 전용, 삭제 불가)
    ════════════════════════════════════════════════════════════════ */
-const APP_VER=25;
+const APP_VER=26;
 const BK_PATH='controlTowerBackups', BK_IDX='controlTowerBackupIndex';
 let SERVER_JSON=null, verBlocked=false, serverEmpty=false, bkState='확인 전';
 function lockReason(){
@@ -1508,7 +1509,14 @@ function cashSeries(from, n){
     rows.forEach(r=>{ const e=r.ym+'-'+String(mDays(r.ym)).padStart(2,'0'); r.endBal=e<R.D0?null:balAt(R,e); }); }
   return {rows, unplaced, ev};
 }
-let CF2={h:90,scen:'base',more:false,add:''};
+let CF2={h:90,scen:'base',more:false,add:'',lp:'graph',lf:'',lt:''};
+function cfListRange(today,end){
+  const ym=today.slice(0,7), dow=(new Date(today+'T00:00:00Z').getUTCDay()+6)%7, wEnd=dAdd(today,6-dow);
+  const r={graph:[today,end],w:[today,wEnd],w2:[today,dAdd(wEnd,7)],m:[today,ym+'-'+String(mDays(ym)).padStart(2,'0')],
+    nm:[addM(ym,1)+'-01',addM(ym,1)+'-'+String(mDays(addM(ym,1))).padStart(2,'0')],d30:[today,dAdd(today,30)],
+    custom:[CF2.lf||today,CF2.lt||dAdd(today,30)]}[CF2.lp]||[today,end];
+  return r[0]>r[1]?[r[1],r[0]]:r;
+}
 function cashChart(R,R0,safe){
   const W=1100,H=270,L=74,Rr=16,T=24,Bm=30, t0=R.today, t1=R.end, span=Math.max(1,dDiff(t0,t1));
   const pts=s=>{ const b0=balBefore(s,t0); const p=[[0,b0]]; let b=b0; s.ev.filter(e=>e.date>=t0&&e.date<=t1).forEach(e=>{ const x=dDiff(t0,e.date); p.push([x,b]); b=e.bal; p.push([x,b]); }); p.push([span,b]); return p; };
@@ -1545,10 +1553,15 @@ function vCash(){
   const lateList=[]; DB.finance.forEach(f=>{ const p=projOf(f.code); if(!p) return; finCalc(f).late.forEach(i=>lateList.push({f,p,i})); });
   liveExports().forEach(o=>{ const c=exportCalc(o); c.late.forEach(r=>lateList.push({xo:o, p:{parent:'[수출]',sub:exLabel(o)}, f:{code:'',client:(o.country||'')}, i:{label:r.label, plan:r.plan, amount:(+r.fx||0)*c.rate*(1-c.wh), status:r.status}})); });
   const cell=(ym,v,kind,style='')=>`<td class="r num" style="cursor:pointer;${style}" onclick="cashDetail('${ym}','${kind}')">${v?wonS(v):'<span style="opacity:.35">·</span>'}</td>`;
-  const up=R.ev.filter(e=>e.date>=today&&e.date<=end); const upShow=CF2.more?up:up.slice(0,30);
+  const [lf,lt]=cfListRange(today,end);
+  const RL=lt>end?cashDaily({end:lt,scen:CF2.scen}):R;
+  const up=RL.ev.filter(e=>e.date>=lf&&e.date<=lt); const upShow=CF2.more?up:up.slice(0,30);
+  const upIn=up.filter(e=>e.dir==='in').reduce((a,e)=>a+e.amount,0), upOut=up.filter(e=>e.dir==='out').reduce((a,e)=>a+e.amount,0);
+  const balS=balBefore(RL,lf), balE=balAt(RL,lt);
+  const moveSrc=R.ev.filter(e=>e.date>=today);
   let wk=''; const SC=[['base','기본'],['delay','입금 30일 지연'],['unconf','미확정 입금 제외']];
   const plans=DB.cashPlans||[]; const cs=R.B;
-  const moveOpts=up.filter(e=>!e.plan&&!e.done).map(e=>`<option value="${esc(e.key)}">${md(e.date)} ${e.dir==='in'?'입금':'지출'} · ${esc(e.label.slice(0,40))} · ${wonS(e.amount)}</option>`).join('');
+  const moveOpts=moveSrc.filter(e=>!e.plan&&!e.done).map(e=>`<option value="${esc(e.key)}">${md(e.date)} ${e.dir==='in'?'입금':'지출'} · ${esc(e.label.slice(0,40))} · ${wonS(e.amount)}</option>`).join('');
   return `${pageHead(`자금 흐름`,`언제 얼마 나가고 들어오는지 → 잔고가 언제 가장 낮아지는지 → 어떻게 대비할지 · 날짜별로 계산 (고정비는 첫 지급일의 일자, 대출은 납입일 · 없으면 25일로 가정)`)}
   ${cs.has?'':`<div class="card" style="border-color:var(--amber);background:var(--amber-bg)"><div class="bd"><b>기초잔액을 먼저 넣어주세요.</b> 아래 <b>기초잔액</b> 칸에 날짜와 그날 통장 잔액을 넣으면 잔고가 계산됩니다. (지금은 0원에서 시작)</div></div>`}
   <div class="kpi">
@@ -1569,7 +1582,11 @@ function vCash(){
   </div>
   <div class="card"><div class="hd"><h2>잔고 그래프</h2><span class="hint">${CF2.scen==='base'?'실선 = 기본':'주황선 = '+SC.find(s=>s[0]===CF2.scen)[1]}${R0?' · 회색 점선 = 기본(가정 제외)':''} · 붉은 띠 = 안전선 아래 · ▲입금 ▼지출 (큰 날만 이름)</span></div>${cashChart(R,R0,safe)}</div>
   <div class="cf2">
-   <div class="card"><div class="hd"><h2>다가오는 돈 일정</h2><span class="hint">날짜순 · 같은 날은 지출 먼저 · 오른쪽 = 그날 잔고 · 누르면 원래 항목</span></div>
+   <div class="card"><div class="hd" style="flex-wrap:wrap;gap:8px"><h2>돈 일정</h2>
+     <select onchange="CF2.lp=this.value;CF2.more=false;render()">${[['graph','그래프 기간 ('+(CF2.h===90?'90일':CF2.h===182?'6개월':'12개월')+')'],['w','이번 주'],['w2','2주'],['m','이번 달'],['nm','다음 달'],['d30','앞으로 30일'],['custom','직접 선택']].map(([k,l])=>`<option value="${k}" ${CF2.lp===k?'selected':''}>${l}</option>`).join('')}</select>
+     ${CF2.lp==='custom'?`<input type="date" value="${esc(lf)}" min="${esc(R.D0)}" onchange="CF2.lf=this.value;render()"><span class="hint">~</span><input type="date" value="${esc(lt)}" onchange="CF2.lt=this.value;render()">`:`<span class="hint num">${md(lf)} ~ ${md(lt)}</span>`}
+     <span class="hint">같은 날은 지출 먼저 · 오른쪽 = 그날 잔고 · 누르면 원래 항목</span></div>
+    <div class="cfsum"><span>시작 잔고 <b class="num">${manS(balS)}</b></span><span style="color:var(--ok)">입금 <b class="num">+${upIn?wonS(upIn):'0'}</b></span><span>지출 <b class="num">−${upOut?wonS(upOut):'0'}</b></span><span>순 <b class="num" style="${upIn-upOut<0?'color:var(--danger)':''}">${upIn-upOut?manS(upIn-upOut):'0'}</b></span><span>끝 잔고 <b class="num" style="${balE<safe?'color:var(--danger)':''}">${manS(balE)}</b></span><span class="hint">${up.length}건</span></div>
     <div class="tw"><table><thead><tr><th>날짜</th><th></th><th>항목</th><th class="r">금액</th><th class="r">잔고</th></tr></thead><tbody>
     ${upShow.map(e=>{ const [y,m,d]=e.date.split('-'); const w=`${+m}월 ${Math.ceil(+d/7)}주`; let h=''; if(w!==wk){ wk=w; h=`<tr class="cfwk"><td colspan="5">${w}</td></tr>`; }
       return h+`<tr class="click ${e.bal<safe?'cflow':''} ${e.plan?'cfplan':''}" onclick="${cfGo(e)}"><td class="num mini nowrap">${md(e.date)}</td>
